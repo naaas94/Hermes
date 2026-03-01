@@ -1,0 +1,29 @@
+[llm]
+provider = "ollama"             # "ollama" or "litellm"
+model = "qwen3:8b"              # Ollama model name
+base_url = "http://localhost:11434"
+temperature = 0.1               # Low temp for extraction (deterministic)
+context_window_tokens = 8192    # Model's context window
+max_retries = 2                 # Repair loop retries per chunk
+timeout_seconds = 120           # Per-call timeout
+
+[llm.litellm]
+model = "gpt-4o-mini"           # LiteLLM model string
+api_key_env = "OPENAI_API_KEY"  # Env var name for the API key
+temperature = 0.0
+context_window_tokens = 128000
+max_retries = 2
+timeout_seconds = 30
+
+[normalization]
+ocr_engine = "surya"            # "surya", "easyocr", or "none"
+ocr_dpi = 150                   # Starting DPI for OCR
+ocr_max_dpi = 300               # Max DPI on retry
+ocr_confidence_threshold = 0.7  # Re-OCR at higher DPI if below this
+
+[storage]
+base_path = "./storage"
+
+[extraction]
+default_schema = "hermes.schemas.examples.generic_table:GenericRow"
+chunk_overlap_ratio = 0.1       # 10% overlap between chunks
