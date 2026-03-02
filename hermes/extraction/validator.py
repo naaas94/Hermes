@@ -39,13 +39,20 @@ def strip_fences(text: str) -> str:
     return text.strip()
 
 
+# Common keys LLMs use to wrap an array (e.g. {"items": [...]}, {"records": [...]})
+_ARRAY_WRAPPER_KEYS = ("items", "records", "data", "results", "rows", "entries")
+
+
 def parse_json_array(text: str) -> list[dict[str, Any]]:
-    """Parse text as a JSON array, handling both array and single-object responses."""
+    """Parse text as a JSON array, handling array, wrapped array, or single-object responses."""
     cleaned = strip_fences(text)
     parsed = json.loads(cleaned)
     if isinstance(parsed, list):
         return parsed
     if isinstance(parsed, dict):
+        for key in _ARRAY_WRAPPER_KEYS:
+            if key in parsed and isinstance(parsed[key], list):
+                return parsed[key]
         return [parsed]
     raise ValueError(f"Expected JSON array or object, got {type(parsed).__name__}")
 

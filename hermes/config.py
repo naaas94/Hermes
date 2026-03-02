@@ -31,6 +31,7 @@ class LLMConfig:
     context_window_tokens: int = 8192
     max_retries: int = 2
     timeout_seconds: int = 120
+    enable_thinking: bool = False  # set false for extraction to avoid long reasoning phases
     litellm: LiteLLMConfig = field(default_factory=LiteLLMConfig)
 
 

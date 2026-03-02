@@ -104,6 +104,7 @@ def test() -> None:
         f"provider=[bold]{cfg.llm.provider}[/bold]  "
         f"model=[bold]{cfg.llm.model if not is_cloud else cfg.llm.litellm.model}[/bold]  "
         f"mode=[bold]{mode_label}[/bold]  workers=[bold]{workers}[/bold]"
+        f"thinking=[bold]{'on' if cfg.llm.enable_thinking else 'off'}[/bold]"
     )
 
     jobs: list[tuple[str, str, float]] = []

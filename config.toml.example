@@ -6,6 +6,7 @@ temperature = 0.1               # Low temp for extraction (deterministic)
 context_window_tokens = 8192    # Model's context window
 max_retries = 2                 # Repair loop retries per chunk
 timeout_seconds = 120           # Per-call timeout
+enable_thinking = false         # Disable for extraction (avoids long reasoning; set true for thinking models if needed)
 
 [llm.litellm]
 model = "gpt-4o-mini"           # LiteLLM model string

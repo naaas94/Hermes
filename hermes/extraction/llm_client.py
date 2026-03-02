@@ -31,8 +31,12 @@ class OllamaClient(BaseLLMClient):
         self.model = config.llm.model
         self.temperature = config.llm.temperature
         self.timeout = config.llm.timeout_seconds
+        self.enable_thinking = config.llm.enable_thinking
 
     def chat(self, system_prompt: str, user_prompt: str) -> LLMResponse:
+        options: dict[str, Any] = {"temperature": self.temperature}
+        if not self.enable_thinking:
+            options["enable_thinking"] = False
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -41,7 +45,7 @@ class OllamaClient(BaseLLMClient):
             ],
             "format": "json",
             "stream": False,
-            "options": {"temperature": self.temperature},
+            "options": options,
         }
 
         start = time.perf_counter_ns()
