@@ -17,3 +17,4 @@ Pytest warns because sqlite3’s default adapter for binding datetime objects is
 
 ---
 
+- print model name when running hermes (be that test or extract or whatever - print it on the terminal)

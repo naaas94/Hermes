@@ -19,10 +19,15 @@ Hermes is **schema-agnostic**: users supply Pydantic models, so there is no sing
 | Layer | What it measures | Cost | When to use |
 | ----- | ---------------- | ---- | ----------- |
 | **Schema / constraint pass rate** | JSON parses, Pydantic validates, required fields present | Low | Every run; baseline health |
+| **Stratified chunk labels (positive / negative)** | Per-chunk or page-range labels: *positive* = source should yield ≥1 valid record (optional golden JSON later); *negative* = no target entities — score abstention (no hallucinated rows) and optionally treat valid empty output as success | Low–medium | Before relying on a single job pass rate; separates “no entities in this chunk” from extraction mistakes |
 | **Golden-file regression** | Byte- or normalized JSON diff vs saved expected output for fixed fixtures | Low–medium | CI on every change |
 | **Field-level match** | Per-field equality or fuzzy match vs ground truth (CSV/JSONL keyed by row id) | Medium | Per-domain benchmarks you maintain |
 | **LLM-as-judge** | Rubric-based scoring of extraction vs source text | Medium–high | Spot checks, not sole metric |
 | **Human review** | Sampled rows with adjudication | High | Calibration, new document types |
+
+**How stratified labels relate to golden eval**
+
+Labels are the **scaffold**: cheap to author (even heuristically — e.g. “endorsement block present” vs “boilerplate only”). **Full golden outputs** (expected JSON per chunk) sit on top for strict regression. Without labels, aggregate metrics can treat **correct abstention** on negative chunks as failure when the engine requires ≥1 validated record to count success — so report **pass rate on positives** and **false-positive rate on negatives** separately before trusting one headline number.
 
 **Best practices (this product category)**
 
@@ -32,6 +37,7 @@ Hermes is **schema-agnostic**: users supply Pydantic models, so there is no sing
 4. **Per-chunk and per-job aggregates** — Report mean/median and p95; one bad chunk should not be hidden in a mean.
 5. **Failure taxonomy** — Tag errors: `schema_reject`, `repair_exhausted`, `ocr_low_confidence`, `hallucinated_field`, etc. Drives product fixes better than one accuracy %.
 6. **Avoid training on your eval set** — If you tune prompts on the same golden files, scores inflate; hold out a frozen set.
+7. **Stratify expected outcomes** — For each fixture, tag chunks (or page ranges) as **positive** (must extract) vs **negative** (must not invent entities). Optionally define whether an empty validated result is **allowed** on negatives so eval matches product rules.
 
 ### Tradeoffs
 
@@ -56,6 +62,8 @@ Useful as **patterns** even if Hermes stays local-first:
 
 **Queued implementation (eval)**
 
+- [ ] **Stratified eval manifest** — For frozen fixtures, a small JSON/YAML mapping (chunk index or page range → `positive` | `negative`, optional notes). Drive **separate** metrics: recall / extraction success on positives; false positives (and optional “allowed empty”) on negatives.
+- [ ] **Scorer rules for negatives** — Align with product: if empty extraction is valid when no entities exist, the scorer should not count that as a regression (Hermes’s current validator may still mark the chunk failed — eval can bridge that gap until behavior changes).
 - [ ] **Golden outputs** — For 1–3 frozen fixtures (Excel + PDF), commit expected JSONL (or normalized form) + a scorer script (field match + tolerances for numbers/dates).
 - [ ] **`hermes eval` or `pytest` entry** — Run pipeline on fixtures, compare to golden, exit non-zero on regression; optional `--update-goldens`.
 - [ ] **Align naming** — `test_excel_accuracy_synthetic.xlsx` implies accuracy testing; either add real accuracy metrics or rename docs to “stress / integration” to avoid confusion.
@@ -138,7 +146,7 @@ Today the codebase uses **stdlib `logging`**. Moving toward **structured logs** 
 
 ## Summary
 
-- **Eval** should combine **schema health**, **golden regressions**, and optionally **field-level** scores—with versioning and stratified reporting—not a single opaque “accuracy.”
+- **Eval** should combine **schema health**, **stratified positive/negative chunk labels** (before trusting aggregate pass rates), **golden regressions**, and optionally **field-level** scores—with versioning and stratified reporting—not a single opaque “accuracy.”
 - **Memory-safe & scalable** claims should be backed by **peak RSS**, **stage-level breakdown**, **throughput**, and **documented benchmark methodology**; **structlog + optional NDJSON** plus a **small bench harness** are the practical path to “show, don’t tell.”
 
 This file is the queue; implement in small PRs aligned with release priorities.
