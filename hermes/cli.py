@@ -36,11 +36,22 @@ def extract(
         "", "--schema", "-s",
         help=(
             "Pydantic schema as module:Class "
-            "(e.g. hermes.schemas.examples.vehicle_fleet:VehicleRecord)."
+            "(e.g. hermes_user.examples.vehicle_fleet:VehicleRecord "
+            "or hermes.schemas.examples.vehicle_fleet:VehicleRecord)."
         ),
     ),
     model: str = typer.Option("", "--model", "-m", help="Override LLM model name."),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of concurrent workers for LLM extraction."),
+    pages: str = typer.Option(
+        "",
+        "--pages",
+        help=(
+            "Optional subset to normalize and extract, using 1-based indices. "
+            "For PDFs, page numbers (e.g. 1-10 or 3,5,7). "
+            "For Excel, sheet indices only (first sheet is 1), not rows. "
+            "Omit to process the whole document."
+        ),
+    ),
 ) -> None:
     """Extract structured data from documents using an LLM."""
     from hermes.extraction.pipeline import run_pipeline
@@ -69,6 +80,7 @@ def extract(
                 schema_ref=schema or None,
                 model_override=model or None,
                 max_workers=workers,
+                pages_spec=pages.strip() or None,
             )
         except Exception as e:
             console.print(f"[red]Error processing {file.name}:[/red] {e}")
@@ -467,6 +479,11 @@ def export_cmd(
 @app.command()
 def init() -> None:
     """Initialize Hermes config directory and default configuration."""
+    from hermes.user_schemas import (
+        DEFAULT_USER_SCHEMA_REF,
+        install_example_schemas_if_missing,
+    )
+
     hermes_dir = Path.home() / ".hermes"
     hermes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -475,17 +492,35 @@ def init() -> None:
         example = Path(__file__).parent.parent / "config.toml.example"
         if example.exists():
             shutil.copy2(example, config_dest)
+            text = config_dest.read_text(encoding="utf-8")
+            text = text.replace(
+                'default_schema = "hermes.schemas.examples.generic_table:GenericRow"',
+                f'default_schema = "{DEFAULT_USER_SCHEMA_REF}"',
+            )
+            config_dest.write_text(text, encoding="utf-8")
             console.print(f"[green]Created config:[/green] {config_dest}")
         else:
             console.print("[yellow]config.toml.example not found, creating minimal config[/yellow]")
             default_config = (
                 '[llm]\nprovider = "ollama"\nmodel = "qwen3:4b"\n\n'
-                '[storage]\nbase_path = "./storage"\n'
+                '[storage]\nbase_path = "./storage"\n\n'
+                f'[extraction]\ndefault_schema = "{DEFAULT_USER_SCHEMA_REF}"\n'
             )
             config_dest.write_text(default_config, encoding="utf-8")
             console.print(f"[green]Created config:[/green] {config_dest}")
     else:
         console.print(f"[dim]Config already exists:[/dim] {config_dest}")
+
+    written = install_example_schemas_if_missing(hermes_dir)
+    for p in written:
+        console.print(f"[green]Installed example schema:[/green] {p}")
+    examples_root = hermes_dir / "hermes_user" / "examples"
+    if examples_root.exists():
+        console.print(
+            "[dim]Use --schema hermes_user.examples.vehicle_fleet:VehicleRecord "
+            "or hermes_user.examples.generic_table:GenericRow (after init; files are "
+            "created only if missing).[/dim]"
+        )
 
     from hermes.db import init_db
     conn = init_db()

@@ -17,10 +17,17 @@ _NORMALIZERS = {
 
 
 def route_normalizer(
-    file_path: Path, job_id: str, preflight: PreflightResult
+    file_path: Path,
+    job_id: str,
+    preflight: PreflightResult,
+    page_indices: frozenset[int] | None = None,
 ) -> list[NormalizedPage]:
-    """Route to the correct normalizer and return normalized pages."""
+    """Route to the correct normalizer and return normalized pages.
+
+    ``page_indices`` is 0-based PDF page indices or Excel sheet indices to include.
+    ``None`` means process every page/sheet.
+    """
     normalizer = _NORMALIZERS.get(preflight.file_type)
     if normalizer is None:
         raise ValueError(f"No normalizer for file type: {preflight.file_type}")
-    return normalizer(file_path, job_id)
+    return normalizer(file_path, job_id, page_indices=page_indices)

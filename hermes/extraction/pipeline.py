@@ -30,6 +30,7 @@ from hermes.extraction.prompts import (
     get_current_prompt_version,
 )
 from hermes.extraction.validator import validate_with_repair
+from hermes.ingestion.pages_spec import resolve_page_indices_0
 from hermes.ingestion.preflight import run_preflight
 from hermes.ingestion.storage import get_chunk_dir, save_raw
 from hermes.models import (
@@ -55,6 +56,7 @@ def run_pipeline(
     schema_ref: str | None = None,
     model_override: str | None = None,
     max_workers: int = 1,
+    pages_spec: str | None = None,
 ) -> str:
     """Execute the full extraction pipeline on a single file. Returns the job ID."""
     cfg = load_config()
@@ -78,6 +80,19 @@ def run_pipeline(
         f"~{preflight.estimated_tokens} tokens"
     )
 
+    page_indices_0: frozenset[int] | None = None
+    if pages_spec is not None and pages_spec.strip():
+        if preflight.file_type == FileType.UNKNOWN:
+            console.print(
+                "[red]--pages applies only to Excel and PDF files.[/red]"
+            )
+            raise ValueError("Incompatible --pages option for this file type.")
+        try:
+            page_indices_0 = resolve_page_indices_0(pages_spec, preflight.page_count)
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise
+
     # 2. Save raw file
     save_raw(file_path, job_id)
 
@@ -100,9 +115,8 @@ def run_pipeline(
             started_at=preflight_started_at,
             ended_at=preflight_ended_at,
             duration_ms=preflight_duration_ms,
-            detail=(
-                f"type={preflight.file_type.value}, pages={preflight.page_count}, "
-                f"est_tokens={preflight.estimated_tokens}"
+            detail=_preflight_detail(
+                preflight, page_indices_0
             ),
         ),
     )
@@ -140,7 +154,9 @@ def run_pipeline(
     normalize_started_at = _now_iso()
     normalize_start_ns = time.perf_counter_ns()
     try:
-        pages = route_normalizer(file_path, job_id, preflight)
+        normalized_pages = route_normalizer(
+            file_path, job_id, preflight, page_indices=page_indices_0,
+        )
     except Exception as e:
         error_msg = f"Normalization failed: {e}"
         normalize_duration_ms = _elapsed_ms(normalize_start_ns)
@@ -165,6 +181,32 @@ def run_pipeline(
         console.print(f"[red]{error_msg}[/red]")
         conn.close()
         return job_id
+
+    if not normalized_pages:
+        error_msg = "Normalization produced no pages; check --pages or the source file."
+        normalize_duration_ms = _elapsed_ms(normalize_start_ns)
+        normalize_ended_at = _now_iso()
+        save_pipeline_stage(
+            conn,
+            PipelineStage(
+                job_id=job_id,
+                stage="normalization",
+                started_at=normalize_started_at,
+                ended_at=normalize_ended_at,
+                duration_ms=normalize_duration_ms,
+                detail=error_msg,
+            ),
+        )
+        update_job_status(
+            conn,
+            job_id,
+            JobStatus.FAILED,
+            normalization_error=error_msg,
+        )
+        console.print(f"[red]{error_msg}[/red]")
+        conn.close()
+        return job_id
+
     normalize_duration_ms = _elapsed_ms(normalize_start_ns)
     normalize_ended_at = _now_iso()
     save_pipeline_stage(
@@ -175,7 +217,9 @@ def run_pipeline(
             started_at=normalize_started_at,
             ended_at=normalize_ended_at,
             duration_ms=normalize_duration_ms,
-            detail=f"normalized_pages={len(pages)}, source={preflight.file_type.value}",
+            detail=_normalization_detail(
+                preflight, len(normalized_pages), page_indices_0
+            ),
         ),
     )
 
@@ -183,7 +227,7 @@ def run_pipeline(
     console.print("[bold]Chunking...[/bold]")
     chunking_started_at = _now_iso()
     chunking_start_ns = time.perf_counter_ns()
-    chunks = chunk_pages(pages)
+    chunks = chunk_pages(normalized_pages)
     chunking_duration_ms = _elapsed_ms(chunking_start_ns)
     chunking_ended_at = _now_iso()
     save_pipeline_stage(
@@ -194,7 +238,7 @@ def run_pipeline(
             started_at=chunking_started_at,
             ended_at=chunking_ended_at,
             duration_ms=chunking_duration_ms,
-            detail=f"chunks={len(chunks)}, pages={len(pages)}",
+            detail=f"chunks={len(chunks)}, normalized_pages={len(normalized_pages)}",
         ),
     )
     update_job_status(conn, job_id, JobStatus.EXTRACTING, total_chunks=len(chunks))
@@ -324,6 +368,35 @@ def run_pipeline(
     )
     conn.close()
     return job_id
+
+
+def _preflight_detail(
+    preflight,
+    page_indices_0: frozenset[int] | None,
+) -> str:
+    base = (
+        f"type={preflight.file_type.value}, pages={preflight.page_count}, "
+        f"est_tokens={preflight.estimated_tokens}"
+    )
+    if page_indices_0 is not None:
+        return f"{base}, page_filter={len(page_indices_0)} of {preflight.page_count}"
+    return base
+
+
+def _normalization_detail(
+    preflight,
+    normalized_count: int,
+    page_indices_0: frozenset[int] | None,
+) -> str:
+    base = (
+        f"normalized_pages={normalized_count}, source={preflight.file_type.value}"
+    )
+    if page_indices_0 is not None:
+        return (
+            f"{base}, subset_of_total={preflight.page_count}, "
+            f"page_filter={len(page_indices_0)}"
+        )
+    return base
 
 
 def _now_iso() -> str:

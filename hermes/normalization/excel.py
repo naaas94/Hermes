@@ -10,7 +10,11 @@ from hermes.models import FileType, NormalizedPage
 ROWS_PER_CHUNK = 50
 
 
-def normalize_excel(file_path: Path, job_id: str) -> list[NormalizedPage]:
+def normalize_excel(
+    file_path: Path,
+    job_id: str,
+    page_indices: frozenset[int] | None = None,
+) -> list[NormalizedPage]:
     """Convert an Excel file to per-sheet Markdown files on disk.
 
     Uses openpyxl read_only mode to avoid loading the entire workbook into RAM.
@@ -24,6 +28,8 @@ def normalize_excel(file_path: Path, job_id: str) -> list[NormalizedPage]:
     wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
     try:
         for sheet_idx, sheet_name in enumerate(wb.sheetnames):
+            if page_indices is not None and sheet_idx not in page_indices:
+                continue
             ws = wb[sheet_name]
             md_path = out_dir / f"sheet_{sheet_idx}.md"
             char_count = _write_sheet_markdown(ws, sheet_name, md_path)

@@ -8,7 +8,11 @@ from hermes.ingestion.storage import get_normalized_dir
 from hermes.models import FileType, NormalizedPage
 
 
-def normalize_pdf_text(file_path: Path, job_id: str) -> list[NormalizedPage]:
+def normalize_pdf_text(
+    file_path: Path,
+    job_id: str,
+    page_indices: frozenset[int] | None = None,
+) -> list[NormalizedPage]:
     """Extract text from each PDF page and write to individual Markdown files.
 
     Pages are processed one at a time and the page object is released immediately
@@ -21,7 +25,11 @@ def normalize_pdf_text(file_path: Path, job_id: str) -> list[NormalizedPage]:
 
     doc = pymupdf.open(str(file_path))
     try:
-        for page_idx in range(len(doc)):
+        if page_indices is None:
+            to_visit = range(len(doc))
+        else:
+            to_visit = sorted(i for i in page_indices if 0 <= i < len(doc))
+        for page_idx in to_visit:
             page = doc[page_idx]
             text = page.get_text("text").strip()
             del page

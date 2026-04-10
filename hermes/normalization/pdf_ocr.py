@@ -16,7 +16,11 @@ from hermes.models import FileType, NormalizedPage
 logger = logging.getLogger(__name__)
 
 
-def normalize_pdf_ocr(file_path: Path, job_id: str) -> list[NormalizedPage]:
+def normalize_pdf_ocr(
+    file_path: Path,
+    job_id: str,
+    page_indices: frozenset[int] | None = None,
+) -> list[NormalizedPage]:
     """OCR each page of a scanned PDF and write Markdown to disk."""
     import pymupdf
 
@@ -27,7 +31,11 @@ def normalize_pdf_ocr(file_path: Path, job_id: str) -> list[NormalizedPage]:
 
     doc = pymupdf.open(str(file_path))
     try:
-        for page_idx in range(len(doc)):
+        if page_indices is None:
+            to_visit = range(len(doc))
+        else:
+            to_visit = sorted(i for i in page_indices if 0 <= i < len(doc))
+        for page_idx in to_visit:
             page = doc[page_idx]
             text, confidence = _ocr_page(
                 page, ocr_fn, cfg.ocr_dpi, cfg.ocr_max_dpi, cfg.ocr_confidence_threshold

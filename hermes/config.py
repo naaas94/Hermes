@@ -52,6 +52,8 @@ class StorageConfig:
 class ExtractionConfig:
     default_schema: str = "hermes.schemas.examples.generic_table:GenericRow"
     chunk_overlap_ratio: float = 0.1
+    # Used when optional `tiktoken` is installed; OpenAI-style models often match cl100k_base.
+    tiktoken_encoding: str = "cl100k_base"
 
 
 @dataclass(frozen=True)
