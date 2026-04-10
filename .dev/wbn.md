@@ -12,3 +12,8 @@ Risk: Low. Discovery via importlib can raise if a user schema has syntax errors.
 
 ---
 
+- SQLite datetime deprecation (Python 3.12+)
+Pytest warns because sqlite3’s default adapter for binding datetime objects is deprecated. It shows up on update_job_status in hermes/db.py when completed_at (a datetime) is passed in the UPDATE parameters—integration tests hit that path. Not a failing test; future-proof by converting datetimes to strings (e.g. .isoformat()) before execute, or registering explicit register_adapter/register_converter on the connection. Same pattern may apply anywhere else you bind datetime into SQLite.
+
+---
+
