@@ -10,11 +10,14 @@ Hermes converts messy Excel spreadsheets, text-layer PDFs, and scanned documents
 - **Cloud-ready** — switch to OpenAI, Anthropic, or Google with a single config change via LiteLLM.
 - **Memory-safe** — streams documents page-by-page; never holds an entire file in RAM.
 - **Schema-driven** — define your own Pydantic models; Hermes extracts to match.
-- **Observable** — every LLM call is logged with tokens, latency, prompt version, and validation status.
-- **Self-healing** — failed extractions enter a dead-letter queue and can be replayed.
+- **Subset extraction** — optional `--pages` limits which PDF pages or Excel sheets are normalized and extracted (large files).
+- **Observable** — Rich progress for normalization and extraction; every LLM call is logged with tokens, latency, prompt version, and validation status.
+- **Self-healing** — failed extractions enter a dead-letter queue and can be replayed; `retry` promotes jobs to completed only when every chunk has a result and the DLQ is clear.
 - **Concurrency-aware** — sequential for local models, parallel with bounded workers for cloud APIs.
 
 ## Installation
+
+Requires **Python 3.12+**.
 
 ```bash
 pip install -e .
@@ -69,6 +72,13 @@ hermes extract ./documents/ --schema my_schemas.custom:MyModel
 
 # With concurrent workers (recommended for cloud LLMs only)
 hermes extract data.xlsx --workers 4
+
+# Optional: limit PDF pages or Excel sheets (1-based indices; for Excel, sheet index only—not rows)
+hermes extract large.pdf --pages 1-10 --schema hermes_user.examples.vehicle_fleet:VehicleRecord
+hermes extract workbook.xlsx --pages 1,3,5
+
+# Debug logs from pipeline, validator, and LLM client (place -v before the subcommand)
+hermes -v extract invoice.pdf --schema hermes_user.examples.vehicle_fleet:VehicleRecord
 ```
 
 ### 4. Check Status
@@ -80,18 +90,32 @@ hermes status abc123       # Detailed view for a specific job
 
 ### 5. Export Results
 
+Exports stream **JSONL** and **CSV** row-by-row so large jobs do not build the whole file in memory.
+
 ```bash
 hermes export abc123 --format jsonl
 hermes export abc123 --format csv --output results.csv
 ```
 
-### 6. Retry Failures
+### 6. Clean Up Jobs
+
+Remove a job’s storage directory under the configured base path and delete related database rows (with confirmation), or wipe all jobs:
+
+```bash
+hermes clean abc123
+hermes clean --all
+hermes clean -f abc123   # skip confirmation (e.g. scripts)
+```
+
+### 7. Retry Failures
 
 ```bash
 hermes retry               # Retry all pending DLQ items
 hermes retry abc123        # Retry failures for a specific job
 hermes retry --model gpt-4o-mini  # Retry with a different model
 ```
+
+After replays, a job is marked **completed** only when there are no pending DLQ rows **and** every chunk has an extraction result (an empty DLQ alone does not mean all chunks ran—e.g. after interrupt).
 
 ## Testing
 
@@ -204,6 +228,7 @@ Hermes is designed for large documents on modest hardware:
 - PDF pages are processed one at a time; pixmaps are deleted immediately
 - Chunks are processed sequentially by default (parallel opt-in for cloud)
 - Results are persisted after each chunk, not batched
+- **Ctrl+C** stops extraction cooperatively: the job can be left **partial** or **failed** with progress saved, not stuck in “extracting”
 - All inter-stage communication uses file paths, never raw bytes
 
 ### Observability
@@ -223,21 +248,24 @@ Query with: `hermes status <job_id>`
 ```bash
 pip install -e ".[dev]"
 
-# Generate test fixtures
+# Generate test fixtures (required before pytest; fixtures are gitignored)
 python tests/generate_fixtures.py
 
-# Generate synthetic test datasets
+# Generate synthetic test datasets (for hermes test)
 python generate_test_datasets.py
+
+# Static checks (same as CI)
+ruff check .
+mypy hermes/
 
 # Run unit tests
 pytest
 
 # Run the full pipeline test suite with telemetry
 hermes test
-
-# Lint
-ruff check hermes/ tests/
 ```
+
+CI (GitHub Actions) runs on pushes to `main` and `dev` and on pull requests: editable install with `[dev]`, then `ruff`, `mypy`, fixture generation, and `pytest`. OCR-heavy tests stay skipped unless the optional `ocr` extra is installed.
 
 ## License
 

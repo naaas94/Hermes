@@ -1,5 +1,35 @@
 # Hermes System Audit
 
+**Document status:** This file is the **original 2026 audit snapshot** (full text preserved below). A **quick reference** at the top segments what is **still open or to review** versus what has been **remediated**; see **`[fixed]`** at the bottom for the detailed remediation map (aligned with `CHANGELOG.md` as of 2026_04_10).
+
+---
+
+## Quick reference — status
+
+### Still open or to review
+
+These items from the audit are **not** fully closed in code/docs, are **partial**, or are **ongoing tradeoffs** (not bugs):
+
+| Area | Item | Notes |
+|------|------|--------|
+| **§5 / CLI** | `hermes list-schemas` | Not implemented; discoverability gap called out in §5. |
+| **§4a** | SQLite write serialization under high `--workers` | **Architectural:** WAL still serializes writes; acceptable for local CLI; no code change required unless you target higher concurrency. |
+| **§4c** | Excel preflight scans all rows | Token estimate still iterates all rows/sheets; sampling not implemented. |
+| **§5** | Test coverage gaps | CI + `generate_fixtures` helps; gaps may remain (OCR pipeline, LiteLLM client, concurrent extraction, `hermes test` / `export` CLI, table chunking, `hermes init` flow, etc.). |
+| **§5** | OCR timeout | Not implemented; complex pages could still hang. |
+| **§5** | Job resumption after crash | Not implemented (distinct from SIGINT graceful shutdown, which **is** implemented). |
+| **§5** | Idempotency / dedup | Same file still creates new jobs; content-hash dedup not implemented. |
+| **§6** | Security: document trusted schema refs | Confirm `README.md` explicitly states that `module:Class` schema refs are trusted (same as running Python). |
+| **§5** | `--quiet` | Audit mentioned verbosity; `--verbose` exists; **no `--quiet`** unless added later. |
+| **§8 P3** | Dockerfile for deployment | Not in repo. |
+| **§8 P2 #18** | Broader test coverage | Ongoing; not fully satisfied by core tests alone. |
+
+### Already addressed (summary)
+
+Bugs §1a–§1d, packaging/migrations, CI, `py.typed`, token alignment, dead code removal, `_fail_job`, context managers, optional `tiktoken`, `--verbose`, `hermes clean`, streaming export, DLQ retry job promotion (with chunk-count guard), LiteLLM retries, normalization progress bars, graceful SIGINT during extraction, batched commits per chunk, typing/mypy hardening, `_parse_config` non-mutation, and more — see **`[fixed]`** below.
+
+---
+
 ## Executive Summary
 
 Hermes is a well-architected local-first CLI for LLM-powered document extraction (~3,200 LoC across 22 Python source files + 2 SQL migrations). The separation of concerns is clean, memory-safety design is deliberate, and the core pipeline works end-to-end. However, several bugs, gaps, and scalability issues need to be addressed before a release.
@@ -96,14 +126,7 @@ Every `save_result`, `save_llm_run`, `save_failed`, `save_pipeline_stage` does i
 
 ## 3. SPEC vs IMPLEMENTATION DRIFT
 
-| Item | `.dev/Hermes.md` says | Implementation does | Impact |
-|---|---|---|---|
-| `jobs.id` type | `INTEGER PRIMARY KEY` | `TEXT PRIMARY KEY` (UUID hex) | Implementation is better; spec outdated |
-| `storage.base_path` default | `~/.hermes/storage` | `./storage` | User confusion; docs say one thing, code does another |
-| Stage todos | All "pending" | All stages are implemented | Misleading for new contributors |
-| `__init__.py` files | Listed in project structure | Missing from subpackages | Packaging broken |
-| Migration 002 | Not in spec | Exists (adds `normalization_error`, `pipeline_stages`) | Spec incomplete |
-| `enable_thinking` config | Not in spec | Implemented in config + Ollama client | Spec incomplete |
+*(Subsection retired.) The original audit included a **spec vs implementation** table against an early scope-of-work write-up, not a maintained product spec. That table is omitted; **`README.md`** and the repository code are the sources of truth for intended behavior.*
 
 ---
 
@@ -234,3 +257,77 @@ When using LiteLLM with `--workers 4+`, there's no rate limiting. OpenAI/Anthrop
 ---
 
 Overall, the system is well-built for a v0.1. The architecture is sound and the pipeline design is solid. The biggest risks for release are the missing `__init__.py` files (packaging will be broken), the OCR per-page model loading (will make scanned PDFs unusable), and the lack of CI (regressions will slip through). Fix those three and you have a viable release.
+
+---
+
+## [fixed] — Remediated items (changelog cross-reference)
+
+The following maps **audit IDs** to **what changed**. Line numbers in code blocks above are **historical**; current paths/layout may differ (e.g. migrations under `hermes/migrations/`).
+
+### Section 1 — Bugs
+
+| ID | Remediation |
+|----|-------------|
+| **1a** | Trailing whitespace before `thinking=` in `hermes test` output (`hermes/cli.py`). |
+| **1b** | Surya models and EasyOCR reader cached per process (`@lru_cache` helpers in `hermes/normalization/pdf_ocr.py`). |
+| **1c** | Wheel includes package tree via `[tool.hatch.build.targets.wheel] packages = ["hermes"]` in `pyproject.toml` (alternative to adding five `__init__.py` files). |
+| **1d** | `CHARS_PER_TOKEN = 4` aligned with preflight `// 4`; optional `tiktoken` for accurate counts (`hermes/normalization/chunker.py`, config `extraction.tiktoken_encoding`). |
+
+### Section 2 — Code quality
+
+| ID | Remediation |
+|----|-------------|
+| **2a** | Removed unused `datasets` import, `read_raw()`, `discover_schemas()`. |
+| **2b** | `_fail_job()` helper in `hermes/extraction/pipeline.py`. |
+| **2c** | Strict mypy pass: typed `_save_failure`, `_parse_config(dict[str, Any])`, Excel `Worksheet` under `TYPE_CHECKING`, OCR `Protocol`s; narrow `# type: ignore` only where stubs lack types (e.g. `pymupdf.open`). |
+| **2d** | `open_db()` / `open_connection()` context managers in `hermes/db.py`; CLI and pipeline use `with` blocks. |
+| **2e** | `save_*` functions accept `commit=`; `_process_chunk` batches one `commit()` per chunk. |
+
+### Section 3 — Spec drift (retired)
+
+| ID | Remediation |
+|----|-------------|
+| **§3** | Original drift table targeted a non-normative initial SOW; **not tracked** in this audit anymore. User-facing accuracy is maintained in **`README.md`** and code. |
+
+### Section 4 — Scalability
+
+| ID | Remediation |
+|----|-------------|
+| **4a** | Unchanged by design (documented tradeoff). |
+| **4b** | `export_results_as_records` is a generator; `hermes export` streams JSONL/CSV (`hermes/db.py`, `hermes/cli.py`). |
+| **4c** | **Not fixed** — full-sheet scan for Excel token estimate remains. |
+| **4d** | LiteLLM path uses retries / backoff strategy (see `CHANGELOG.md` for `litellm.completion` parameters; evolved from early `retry_after` notes). |
+
+### Section 5 — Gaps
+
+| ID | Remediation |
+|----|-------------|
+| **Infra** | `.github/workflows/ci.yml`, `hermes/py.typed`, hatch wheel + `hermes/migrations/`. |
+| **CLI** | Global `--verbose` / `-v`; `hermes clean` with `--all`, `--force`, `typer.confirm`; normalization **Progress** + `on_page_done` in normalizers. **`list-schemas` not implemented.** |
+| **Resilience** | SIGINT during extraction: `threading.Event`, partial/failed final status, stage detail `interrupted`; threaded pool shutdown with cancel. **Resume-after-crash, OCR timeout, dedup — not implemented.** |
+| **DLQ** | After `retry`, jobs can promote to `completed` when DLQ empty for job, status was partial/failed, and distinct extraction chunk count matches `total_chunks` (see `CHANGELOG.md` / `count_distinct_extraction_chunk_indices`). |
+
+### Section 6 — Security
+
+| ID | Remediation |
+|----|-------------|
+| **§6** | `_parse_config` uses `.get("litellm", {})` and excludes `litellm` from `llm_fields` — **no mutation** of loaded dict. **Explicit user-facing doc** on trusted schema refs — **review** `README.md` if needed. |
+
+### Section 8 — Recommended next steps (mapping)
+
+| Audit list | Outcome |
+|------------|---------|
+| **P0 1–5** | Addressed (packaging path, OCR cache, CLI spacing, CI, migrations in wheel + `get_migrations_dir()`). |
+| **P1 6–11** | Addressed. |
+| **P2 12** | Redundant after 1b (cached readers). |
+| **P2 13–15, 17, 23** | `clean`, graceful shutdown, LiteLLM retries, streaming export, normalization progress. |
+| **P2 16** | **Not implemented** (resume). |
+| **P2 18** | **Partial** (CI tests; gaps may remain). |
+| **P3 19** | **Largely addressed** (residual ignores only where stubs require). |
+| **P3 20** | Batch commits per chunk — **done**. |
+| **P3 21–22** | Dedup, `list-schemas` — **not done**. |
+| **P3 24** | Dockerfile — **not done**. |
+
+---
+
+*End of audit document. Update the **Quick reference** and **`[fixed]`** sections when closing additional items.*
