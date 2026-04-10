@@ -211,13 +211,27 @@ def _run_pipeline_inner(
         except Exception as e:
             error_msg = f"Normalization failed: {e}"
             normalize_duration_ms = _elapsed_ms(normalize_start_ns)
-            _fail_job(conn, job_id, "normalization", error_msg, normalize_started_at, normalize_duration_ms)
+            _fail_job(
+                conn,
+                job_id,
+                "normalization",
+                error_msg,
+                normalize_started_at,
+                normalize_duration_ms,
+            )
             return job_id
 
         if not normalized_pages:
             error_msg = "Normalization produced no pages; check --pages or the source file."
             normalize_duration_ms = _elapsed_ms(normalize_start_ns)
-            _fail_job(conn, job_id, "normalization", error_msg, normalize_started_at, normalize_duration_ms)
+            _fail_job(
+                conn,
+                job_id,
+                "normalization",
+                error_msg,
+                normalize_started_at,
+                normalize_duration_ms,
+            )
             return job_id
 
         normalize_duration_ms = _elapsed_ms(normalize_start_ns)

@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class FileType(str, Enum):
+class FileType(StrEnum):
     EXCEL = "excel"
     PDF_TEXT = "pdf_text"
     PDF_SCANNED = "pdf_scanned"
     UNKNOWN = "unknown"
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     QUEUED = "queued"
     NORMALIZING = "normalizing"
     EXTRACTING = "extracting"
@@ -26,7 +26,7 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
-class DLQStatus(str, Enum):
+class DLQStatus(StrEnum):
     PENDING = "pending"
     REPLAYED = "replayed"
     ABANDONED = "abandoned"
