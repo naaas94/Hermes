@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Generator
-from typing import Any
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from hermes.config import get_db_path, get_migrations_dir
 from hermes.models import (
@@ -196,6 +196,17 @@ def get_results_for_job(conn: sqlite3.Connection, job_id: str) -> list[Extractio
         )
         for r in rows
     ]
+
+
+def count_distinct_extraction_chunk_indices(
+    conn: sqlite3.Connection, job_id: str
+) -> int:
+    """How many chunk indices have at least one saved extraction row (distinct chunks done)."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT chunk_index) FROM extraction_results WHERE job_id = ?",
+        (job_id,),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
 
 
 # ── LLM Runs ─────────────────────────────────────────────────────────

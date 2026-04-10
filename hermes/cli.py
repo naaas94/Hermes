@@ -338,6 +338,7 @@ def retry(
     """Replay failed extractions from the dead-letter queue."""
     from hermes.config import get_storage_base, load_config
     from hermes.db import (
+        count_distinct_extraction_chunk_indices,
         get_failed_for_job,
         get_job,
         open_db,
@@ -447,19 +448,28 @@ def retry(
 
         for jid in {f.job_id for f in failures}:
             job = get_job(conn, jid)
-            if job:
-                total_pending = len(get_failed_for_job(conn, jid))
-                if total_pending == 0 and job.status in (
-                    JobStatus.PARTIAL,
-                    JobStatus.FAILED,
-                ):
-                    update_job_status(
-                        conn,
-                        jid,
-                        JobStatus.COMPLETED,
-                        completed_chunks=job.total_chunks,
-                        failed_chunks=0,
-                    )
+            if not job:
+                continue
+            total_pending = len(get_failed_for_job(conn, jid))
+            if job.status not in (JobStatus.PARTIAL, JobStatus.FAILED):
+                continue
+            if total_pending != 0:
+                continue
+            chunks_with_results = count_distinct_extraction_chunk_indices(conn, jid)
+            if job.total_chunks > 0 and chunks_with_results == job.total_chunks:
+                update_job_status(
+                    conn,
+                    jid,
+                    JobStatus.COMPLETED,
+                    completed_chunks=job.total_chunks,
+                    failed_chunks=0,
+                )
+            elif job.total_chunks > 0 and chunks_with_results < job.total_chunks:
+                console.print(
+                    f"[yellow]Job {jid}: DLQ is empty but only "
+                    f"{chunks_with_results}/{job.total_chunks} chunk(s) have extraction "
+                    f"results (e.g. interrupted run). Job status left unchanged.[/yellow]"
+                )
 
 
 @app.command(name="export")

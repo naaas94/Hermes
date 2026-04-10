@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from hermes.db import (
+    count_distinct_extraction_chunk_indices,
     create_job,
     get_job,
     get_results_for_job,
@@ -119,6 +120,34 @@ def test_save_and_get_results(tmp_db: sqlite3.Connection):
     fetched = get_results_for_job(tmp_db, "res_job")
     assert len(fetched) == 1
     assert fetched[0].record_json == '[{"key": "val"}]'
+
+    assert count_distinct_extraction_chunk_indices(tmp_db, "res_job") == 1
+
+    save_result(
+        tmp_db,
+        ExtractionResult(
+            job_id="res_job",
+            chunk_index=1,
+            source_pages="2",
+            record_json="[]",
+            model="qwen3:4b",
+            prompt_version="abc",
+        ),
+    )
+    assert count_distinct_extraction_chunk_indices(tmp_db, "res_job") == 2
+
+    save_result(
+        tmp_db,
+        ExtractionResult(
+            job_id="res_job",
+            chunk_index=1,
+            source_pages="2",
+            record_json="[]",
+            model="qwen3:4b",
+            prompt_version="abc",
+        ),
+    )
+    assert count_distinct_extraction_chunk_indices(tmp_db, "res_job") == 2
 
 
 def test_save_llm_run(tmp_db: sqlite3.Connection):
