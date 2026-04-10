@@ -57,18 +57,3 @@ def load_schema(schema_ref: str) -> type[BaseModel]:
 def get_json_schema(schema_class: type[BaseModel]) -> dict[str, Any]:
     """Generate the JSON Schema for a Pydantic model."""
     return schema_class.model_json_schema()
-
-
-def discover_schemas(module_path: str) -> list[type[BaseModel]]:
-    """Find all BaseModel subclasses in a given module."""
-    _ensure_user_hermes_on_sys_path()
-    try:
-        module = importlib.import_module(module_path)
-    except ModuleNotFoundError as e:
-        raise ValueError(f"Cannot import module '{module_path}': {e}") from e
-
-    models: list[type[BaseModel]] = []
-    for _, obj in inspect.getmembers(module, inspect.isclass):
-        if issubclass(obj, BaseModel) and obj is not BaseModel:
-            models.append(obj)
-    return models

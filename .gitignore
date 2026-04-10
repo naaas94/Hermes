@@ -12,4 +12,3 @@ build/
 *.pyo
 .env
 .venv/
-.dev/

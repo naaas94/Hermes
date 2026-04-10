@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hermes.ingestion.storage import get_normalized_dir
 from hermes.models import FileType, NormalizedPage
+
+if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
 
 ROWS_PER_CHUNK = 50
 
@@ -14,6 +19,7 @@ def normalize_excel(
     file_path: Path,
     job_id: str,
     page_indices: frozenset[int] | None = None,
+    on_page_done: Callable[[int], None] | None = None,
 ) -> list[NormalizedPage]:
     """Convert an Excel file to per-sheet Markdown files on disk.
 
@@ -41,13 +47,15 @@ def normalize_excel(
                     char_count=char_count,
                 )
             )
+            if on_page_done is not None:
+                on_page_done(sheet_idx)
     finally:
         wb.close()
 
     return pages
 
 
-def _write_sheet_markdown(ws, sheet_name: str, md_path: Path) -> int:  # type: ignore[no-untyped-def]
+def _write_sheet_markdown(ws: Worksheet, sheet_name: str, md_path: Path) -> int:
     """Stream rows from a worksheet into a Markdown file, chunk by chunk."""
     char_count = 0
     header_written = False

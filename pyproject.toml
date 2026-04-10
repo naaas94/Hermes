@@ -31,6 +31,7 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.4",
     "mypy>=1.10",
+    "types-openpyxl>=3.1",
 ]
 
 [project.scripts]
@@ -47,5 +48,17 @@ select = ["E", "F", "I", "UP"]
 python_version = "3.12"
 strict = true
 
+# Optional OCR stack is not installed in default / CI dev envs.
+[[tool.mypy.overrides]]
+module = "surya.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "easyocr"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes"]

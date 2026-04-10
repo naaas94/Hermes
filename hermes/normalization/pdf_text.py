@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from hermes.ingestion.storage import get_normalized_dir
 from hermes.models import FileType, NormalizedPage
@@ -12,6 +14,7 @@ def normalize_pdf_text(
     file_path: Path,
     job_id: str,
     page_indices: frozenset[int] | None = None,
+    on_page_done: Callable[[int], None] | None = None,
 ) -> list[NormalizedPage]:
     """Extract text from each PDF page and write to individual Markdown files.
 
@@ -23,10 +26,10 @@ def normalize_pdf_text(
     out_dir = get_normalized_dir(job_id)
     pages: list[NormalizedPage] = []
 
-    doc = pymupdf.open(str(file_path))
+    doc: Any = pymupdf.open(str(file_path))  # type: ignore[no-untyped-call]
     try:
         if page_indices is None:
-            to_visit = range(len(doc))
+            to_visit: list[int] = list(range(len(doc)))
         else:
             to_visit = sorted(i for i in page_indices if 0 <= i < len(doc))
         for page_idx in to_visit:
@@ -46,6 +49,8 @@ def normalize_pdf_text(
                     char_count=len(content),
                 )
             )
+            if on_page_done is not None:
+                on_page_done(page_idx)
     finally:
         doc.close()
 

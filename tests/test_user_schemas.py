@@ -19,7 +19,9 @@ def _clear_hermes_user_modules() -> None:
             del sys.modules[k]
 
 
-def test_install_example_schemas_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_install_example_schemas_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     hh = tmp_path / ".hermes"
     w1 = install_example_schemas_if_missing()

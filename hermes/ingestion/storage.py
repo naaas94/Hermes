@@ -27,13 +27,6 @@ def save_raw(file_path: Path, job_id: str) -> Path:
     return dest
 
 
-def read_raw(uri: Path) -> Path:
-    """Return the path if it exists, raise otherwise."""
-    if not uri.exists():
-        raise FileNotFoundError(f"Raw file not found: {uri}")
-    return uri
-
-
 def get_normalized_dir(job_id: str) -> Path:
     d = _job_dir(job_id) / "normalized"
     d.mkdir(parents=True, exist_ok=True)

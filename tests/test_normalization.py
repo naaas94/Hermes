@@ -43,7 +43,9 @@ def test_normalize_pdf_text(sample_pdf_text: Path, tmp_path: Path, monkeypatch: 
     assert "Toyota" in content or "FLOTILLA" in content
 
 
-def test_normalize_pdf_text_page_filter(sample_pdf_text: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_normalize_pdf_text_page_filter(
+    sample_pdf_text: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     if not sample_pdf_text.exists():
         pytest.skip("Run generate_fixtures.py first")
 

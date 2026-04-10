@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from hermes.models import FileType, PreflightResult
 
@@ -51,12 +52,12 @@ def _classify_pdf(file_path: Path) -> FileType:
     except ImportError:
         return FileType.PDF_TEXT  # assume text if pymupdf not available
 
-    doc = pymupdf.open(str(file_path))
+    doc: Any = pymupdf.open(str(file_path))  # type: ignore[no-untyped-call]
     try:
         text_chars = 0
         pages_checked = min(len(doc), 5)  # sample first 5 pages
         for i in range(pages_checked):
-            page = doc[i]
+            page: Any = doc[i]
             text = page.get_text("text")
             text_chars += len(text.strip())
             del page
@@ -82,7 +83,8 @@ def run_preflight(file_path: Path) -> PreflightResult:
     if file_type in (FileType.PDF_TEXT, FileType.PDF_SCANNED):
         try:
             import pymupdf
-            doc = pymupdf.open(str(file_path))
+
+            doc: Any = pymupdf.open(str(file_path))  # type: ignore[no-untyped-call]
             page_count = len(doc)
             has_text_layer = file_type == FileType.PDF_TEXT
 

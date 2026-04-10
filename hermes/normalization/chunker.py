@@ -16,7 +16,7 @@ try:
 except ImportError:
     tiktoken_mod = None
 
-CHARS_PER_TOKEN = 2
+CHARS_PER_TOKEN = 4
 
 # Table chunks: cap rows so LLM output stays small
 MAX_TABLE_ROWS_PER_CHUNK = 10

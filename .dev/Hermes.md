@@ -163,7 +163,7 @@ LICENSE
 - `config.py`: Load from `~/.hermes/config.toml`. Defaults for LLM provider (`ollama`), model name (`qwen3:8b`), concurrency, retry budget, storage path.
 - `db.py`: SQLite with WAL mode. Tables: `jobs`, `extraction_results`, `llm_runs`, `failed_extractions`. Migration `001_initial.sql`.
 - `cli.py`: `hermes extract <file_or_dir>` command stub. `hermes status` to show job states. `hermes retry` to replay DLQ items.
-- `ingestion/storage.py`: Simple local file store. `save_raw(file_path) -> storage_uri`, `read_raw(uri) -> Path`. Files stored under `~/.hermes/storage/{job_id}/raw/`.
+- `ingestion/storage.py`: Simple local file store. `save_raw(file_path, job_id) -> Path` copies into `{job_id}/raw/` and returns the destination path; callers use that path directly (no separate read helper). Base: `~/.hermes/storage/` (via config).
 - `ingestion/preflight.py`: Detect file type (extension + magic bytes). For PDFs: check if text layer exists (pymupdf `page.get_text()` length). Estimate page count. Return a `PreflightResult(file_type, page_count, has_text_layer, estimated_tokens)`.
 
 **Tests:** Config loading, DB init/migration, preflight classification for Excel/PDF-text/PDF-scanned test fixtures.

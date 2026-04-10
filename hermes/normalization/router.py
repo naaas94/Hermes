@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from hermes.models import FileType, NormalizedPage, PreflightResult
@@ -21,13 +22,19 @@ def route_normalizer(
     job_id: str,
     preflight: PreflightResult,
     page_indices: frozenset[int] | None = None,
+    on_page_done: Callable[[int], None] | None = None,
 ) -> list[NormalizedPage]:
     """Route to the correct normalizer and return normalized pages.
 
     ``page_indices`` is 0-based PDF page indices or Excel sheet indices to include.
     ``None`` means process every page/sheet.
+
+    ``on_page_done`` is invoked with the 0-based page/sheet index after each unit is
+    written (for progress reporting; optional).
     """
     normalizer = _NORMALIZERS.get(preflight.file_type)
     if normalizer is None:
         raise ValueError(f"No normalizer for file type: {preflight.file_type}")
-    return normalizer(file_path, job_id, page_indices=page_indices)
+    return normalizer(
+        file_path, job_id, page_indices=page_indices, on_page_done=on_page_done
+    )
