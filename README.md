@@ -20,6 +20,8 @@ Hermes converts messy Excel spreadsheets, text-layer PDFs, and scanned documents
 pip install -e .
 ```
 
+Optional: `pip install -e ".[tiktoken]"` for tokenizer-accurate chunk sizing (override encoding with `extraction.tiktoken_encoding`, default `cl100k_base`).
+
 For OCR support (scanned PDFs):
 
 ```bash
@@ -40,7 +42,7 @@ pip install -e ".[dev]"
 hermes init
 ```
 
-This creates `~/.hermes/config.toml` with default settings and initializes the SQLite database.
+This creates `~/.hermes/config.toml` with default settings, initializes the SQLite database, and installs editable example schemas under `~/.hermes/hermes_user/examples/` (vehicle fleet and generic table copies; existing files are left unchanged). The default `default_schema` in that config points at the local package (`hermes_user.examples.generic_table:GenericRow`) so extraction works without relying on site-packages paths. Hermes prepends `~/.hermes` to the import path when loading schemas, so you do not need to set `PYTHONPATH`.
 
 ### 2. Start Ollama
 
@@ -53,10 +55,13 @@ ollama pull qwen3:8b
 ### 3. Extract
 
 ```bash
-# Using a built-in example schema
+# After hermes init: user-local copies (editable under ~/.hermes/hermes_user/examples/)
+hermes extract invoice.pdf --schema hermes_user.examples.vehicle_fleet:VehicleRecord
+
+# Same models via the shipped package (no init required)
 hermes extract invoice.pdf --schema hermes.schemas.examples.vehicle_fleet:VehicleRecord
 
-# Using the generic table extractor
+# Using the generic table extractor (default_schema from config, or override)
 hermes extract data.xlsx
 
 # Process an entire directory
@@ -177,7 +182,7 @@ class InvoiceItem(BaseModel):
     total: float | None = None
 ```
 
-Then extract:
+Then extract (ensure the directory containing your package is on `PYTHONPATH`, or place the package under `~/.hermes/` like `hermes init` does for `hermes_user`):
 
 ```bash
 hermes extract invoice.pdf --schema my_schemas.invoice:InvoiceItem

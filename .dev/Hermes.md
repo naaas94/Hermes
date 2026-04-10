@@ -33,7 +33,7 @@ isProject: false
 - **Name:** Hermes
 - **Tagline:** "Local-first, memory-safe, LLM-powered document extraction engine."
 - **License:** MIT
-- **Language:** Python 3.11+
+- **Language:** Python 3.12+
 - **Deployment:** CLI-first, SQLite storage, runs entirely offline via Ollama. Cloud LLMs available via LiteLLM configuration.
 
 ---
@@ -95,7 +95,7 @@ flowchart TD
 | Database      | SQLite (WAL mode)             | Local-first, zero config, proven in QI                      |
 | Config        | TOML                          | Same pattern as QI (`~/.hermes/config.toml`)              |
 | HTTP Client   | `httpx`                     | For Ollama API calls (same as QI)                           |
-| Retry         | `tenacity`                  | Exponential backoff with strict retry budgets               |
+| Validation repair | `extraction/validator.py` | Bounded manual loop: `validate_with_repair` (default `max_retries=2` → up to 3 LLM attempts per chunk); no inter-attempt backoff |
 | Testing       | `pytest`                    | Standard                                                    |
 | Linting       | `ruff`, `mypy`            | Standard                                                    |
 
@@ -163,7 +163,7 @@ LICENSE
 - `config.py`: Load from `~/.hermes/config.toml`. Defaults for LLM provider (`ollama`), model name (`qwen3:8b`), concurrency, retry budget, storage path.
 - `db.py`: SQLite with WAL mode. Tables: `jobs`, `extraction_results`, `llm_runs`, `failed_extractions`. Migration `001_initial.sql`.
 - `cli.py`: `hermes extract <file_or_dir>` command stub. `hermes status` to show job states. `hermes retry` to replay DLQ items.
-- `ingestion/storage.py`: Simple local file store. `save_raw(file_path) -> storage_uri`, `read_raw(uri) -> Path`. Files stored under `~/.hermes/storage/{job_id}/raw/`.
+- `ingestion/storage.py`: Simple local file store. `save_raw(file_path, job_id) -> Path` copies into `{job_id}/raw/` and returns the destination path; callers use that path directly (no separate read helper). Base: `~/.hermes/storage/` (via config).
 - `ingestion/preflight.py`: Detect file type (extension + magic bytes). For PDFs: check if text layer exists (pymupdf `page.get_text()` length). Estimate page count. Return a `PreflightResult(file_type, page_count, has_text_layer, estimated_tokens)`.
 
 **Tests:** Config loading, DB init/migration, preflight classification for Excel/PDF-text/PDF-scanned test fixtures.
@@ -268,7 +268,7 @@ LICENSE
   - Parse as JSON array.
   - Validate each element against the user-defined Pydantic schema.
   - Return `list[ValidatedRecord]` for records that pass, `list[FailedRecord]` for those that don't.
-  - **Repair Loop:** If validation fails, build a repair prompt: "The following JSON did not match the schema. Error: {error}. Fix it and return valid JSON only." Retry up to `llm.max_retries` times (default: 2).
+  - **Repair Loop:** If validation fails, build a repair prompt: "The following JSON did not match the schema. Error: {error}. Fix it and return valid JSON only." A plain `while` loop calls the LLM again (no tenacity/backoff): up to `max_retries` repair passes after the first attempt (default `max_retries=2` → 3 tries total).
 - `extraction/pipeline.py`:
 
   - **The Orchestrator.** This is the main function called by the CLI.
@@ -331,7 +331,7 @@ LICENSE
 | PDF page rasterization          | One page at a time, delete pixmap immediately            | `normalization/pdf_ocr.py` uses `del pixmap` after each page                |
 | Excel full workbook load        | `read_only=True` mode in openpyxl                      | `normalization/excel.py` iterates rows lazily                                 |
 | Unbounded concurrency           | Sequential by default, semaphore for opt-in concurrency  | `extraction/pipeline.py` processes one chunk at a time                        |
-| Retry storms                    | Strict retry budget per chunk (max 2 retries)            | `extraction/validator.py` uses `tenacity.stop_after_attempt(3)`             |
+| Retry storms                    | Strict retry budget per chunk (max 2 repairs)          | `validate_with_repair(..., max_retries=2)`: 1 initial validation + up to 2 repair LLM calls; no backoff between attempts |
 | Batch accumulation              | Persist each result immediately after validation         | `extraction/pipeline.py` calls `save_result()` per chunk, not at end        |
 | String concatenation in prompts | Build prompts via f-strings with pre-computed components | `extraction/prompts.py` builds prompt once per chunk                          |
 | Holding bytes + base64 + text   | Workers pass URIs (file paths), never raw bytes          | All inter-stage communication is via `Path` objects                           |

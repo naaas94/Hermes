@@ -1,9 +1,11 @@
+# ruff: noqa: E501
 import os
 import random
+
 import pandas as pd
 from faker import Faker
-from datasets import load_dataset
 from fpdf import FPDF
+
 
 def generate_synthetic_excel():
     print("Generating synthetic Excel dataset for extraction testing...")
@@ -59,8 +61,9 @@ def generate_riscbac_pdf():
     print("Fetching PDF for stress testing...")
     
     # Generate a more realistic PDF using Faker directly instead of relying on the dataset text which seems empty or malformed
-    from faker import Faker
     import random
+
+    from faker import Faker
     
     fake = Faker()
     out_path = "test_pdf_stress_riscbac.pdf"
@@ -99,7 +102,7 @@ def generate_riscbac_pdf():
                 f"Period of Insurance: {fake.date_between(start_date='-1y', end_date='today')} to {fake.date_between(start_date='today', end_date='+1y')}",
                 f"Insured Name: {fake.company()}",
                 f"Address: {fake.address().replace(chr(10), ', ')}",
-                f"Business/Profession: Logistics & Transport"
+                "Business/Profession: Logistics & Transport"
             ]
             
             for detail in details:

@@ -43,6 +43,22 @@ def test_normalize_pdf_text(sample_pdf_text: Path, tmp_path: Path, monkeypatch: 
     assert "Toyota" in content or "FLOTILLA" in content
 
 
+def test_normalize_pdf_text_page_filter(
+    sample_pdf_text: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    if not sample_pdf_text.exists():
+        pytest.skip("Run generate_fixtures.py first")
+
+    monkeypatch.setattr("hermes.ingestion.storage.get_storage_base", lambda: tmp_path)
+
+    from hermes.normalization.pdf_text import normalize_pdf_text
+
+    pages = normalize_pdf_text(sample_pdf_text, "test_job", page_indices=frozenset({1}))
+    assert len(pages) == 1
+    assert pages[0].page_index == 1
+    assert pages[0].markdown_path.name == "page_1.md"
+
+
 def test_chunker_merges_small_pages(tmp_path: Path):
     from hermes.normalization.chunker import chunk_pages
 

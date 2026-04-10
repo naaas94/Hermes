@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -48,12 +48,12 @@ def parse_json_array(text: str) -> list[dict[str, Any]]:
     cleaned = strip_fences(text)
     parsed = json.loads(cleaned)
     if isinstance(parsed, list):
-        return parsed
+        return cast(list[dict[str, Any]], parsed)
     if isinstance(parsed, dict):
         for key in _ARRAY_WRAPPER_KEYS:
             if key in parsed and isinstance(parsed[key], list):
-                return parsed[key]
-        return [parsed]
+                return cast(list[dict[str, Any]], parsed[key])
+        return [cast(dict[str, Any], parsed)]
     raise ValueError(f"Expected JSON array or object, got {type(parsed).__name__}")
 
 

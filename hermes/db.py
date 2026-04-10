@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from hermes.config import get_db_path, get_migrations_dir
 from hermes.models import (
@@ -55,6 +58,24 @@ def init_db(db_path: Path | None = None) -> sqlite3.Connection:
     conn.commit()
     run_migrations(conn)
     return conn
+
+
+@contextmanager
+def open_db(db_path: Path | None = None) -> Generator[sqlite3.Connection, None, None]:
+    conn = init_db(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
+def open_connection(db_path: Path | None = None) -> Generator[sqlite3.Connection, None, None]:
+    conn = get_connection(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 # ── Job CRUD ──────────────────────────────────────────────────────────
@@ -109,6 +130,18 @@ def list_jobs(conn: sqlite3.Connection) -> list[Job]:
     return [_row_to_job(r) for r in rows]
 
 
+def delete_job(conn: sqlite3.Connection, job_id: str) -> None:
+    for table in (
+        "extraction_results",
+        "llm_runs",
+        "failed_extractions",
+        "pipeline_stages",
+    ):
+        conn.execute(f"DELETE FROM {table} WHERE job_id = ?", (job_id,))
+    conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+    conn.commit()
+
+
 def _row_to_job(row: sqlite3.Row) -> Job:
     from hermes.models import FileType
     normalization_error = ""
@@ -134,7 +167,9 @@ def _row_to_job(row: sqlite3.Row) -> Job:
 
 # ── Extraction Results ────────────────────────────────────────────────
 
-def save_result(conn: sqlite3.Connection, result: ExtractionResult) -> None:
+def save_result(
+    conn: sqlite3.Connection, result: ExtractionResult, *, commit: bool = True
+) -> None:
     conn.execute(
         "INSERT INTO extraction_results (job_id, chunk_index, source_pages, "
         "record_json, model, prompt_version) VALUES (?, ?, ?, ?, ?, ?)",
@@ -143,7 +178,8 @@ def save_result(conn: sqlite3.Connection, result: ExtractionResult) -> None:
             result.record_json, result.model, result.prompt_version,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def get_results_for_job(conn: sqlite3.Connection, job_id: str) -> list[ExtractionResult]:
@@ -162,9 +198,22 @@ def get_results_for_job(conn: sqlite3.Connection, job_id: str) -> list[Extractio
     ]
 
 
+def count_distinct_extraction_chunk_indices(
+    conn: sqlite3.Connection, job_id: str
+) -> int:
+    """How many chunk indices have at least one saved extraction row (distinct chunks done)."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT chunk_index) FROM extraction_results WHERE job_id = ?",
+        (job_id,),
+    ).fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
+
+
 # ── LLM Runs ─────────────────────────────────────────────────────────
 
-def save_llm_run(conn: sqlite3.Connection, run: LLMRun) -> None:
+def save_llm_run(
+    conn: sqlite3.Connection, run: LLMRun, *, commit: bool = True
+) -> None:
     conn.execute(
         "INSERT INTO llm_runs (job_id, chunk_index, run_type, model, prompt_version, "
         "tokens_in, tokens_out, total_latency_ms, validation_passed, "
@@ -176,12 +225,15 @@ def save_llm_run(conn: sqlite3.Connection, run: LLMRun) -> None:
             run.validation_error, run.raw_output,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # ── Pipeline Stage Telemetry ─────────────────────────────────────────
 
-def save_pipeline_stage(conn: sqlite3.Connection, stage: PipelineStage) -> None:
+def save_pipeline_stage(
+    conn: sqlite3.Connection, stage: PipelineStage, *, commit: bool = True
+) -> None:
     conn.execute(
         "INSERT INTO pipeline_stages (job_id, stage, started_at, ended_at, "
         "duration_ms, detail) VALUES (?, ?, ?, ?, ?, ?)",
@@ -194,7 +246,8 @@ def save_pipeline_stage(conn: sqlite3.Connection, stage: PipelineStage) -> None:
             stage.detail,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def get_stages_for_job(conn: sqlite3.Connection, job_id: str) -> list[PipelineStage]:
@@ -219,7 +272,9 @@ def get_stages_for_job(conn: sqlite3.Connection, job_id: str) -> list[PipelineSt
 
 # ── Failed Extractions (DLQ) ─────────────────────────────────────────
 
-def save_failed(conn: sqlite3.Connection, fail: FailedExtraction) -> None:
+def save_failed(
+    conn: sqlite3.Connection, fail: FailedExtraction, *, commit: bool = True
+) -> None:
     conn.execute(
         "INSERT INTO failed_extractions (job_id, chunk_index, chunk_text_uri, "
         "last_error, retry_count, status) VALUES (?, ?, ?, ?, ?, ?)",
@@ -228,7 +283,8 @@ def save_failed(conn: sqlite3.Connection, fail: FailedExtraction) -> None:
             fail.last_error, fail.retry_count, fail.status.value,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def get_failed_for_job(
@@ -288,17 +344,21 @@ def get_llm_runs_for_job(conn: sqlite3.Connection, job_id: str) -> list[LLMRun]:
 
 def export_results_as_records(
     conn: sqlite3.Connection, job_id: str
-) -> list[dict]:  # type: ignore[type-arg]
-    """Return all extraction results for a job as a list of parsed dicts."""
-    results = get_results_for_job(conn, job_id)
-    records: list[dict] = []  # type: ignore[type-arg]
-    for r in results:
+) -> Generator[dict[str, Any], None, None]:
+    """Yield extraction results for a job as parsed JSON objects, one at a time."""
+    cur = conn.execute(
+        "SELECT record_json FROM extraction_results WHERE job_id = ? ORDER BY chunk_index",
+        (job_id,),
+    )
+    for row in cur:
+        raw = row["record_json"]
+        if raw is None:
+            continue
         try:
-            parsed = json.loads(r.record_json)
-            if isinstance(parsed, list):
-                records.extend(parsed)
-            else:
-                records.append(parsed)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
             continue
-    return records
+        if isinstance(parsed, list):
+            yield from parsed
+        else:
+            yield parsed

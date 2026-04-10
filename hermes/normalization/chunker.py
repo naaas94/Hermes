@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import re
+import types
+from abc import ABC, abstractmethod
+from typing import Protocol
 
 from hermes.config import load_config
 from hermes.models import Chunk, NormalizedPage
 
-CHARS_PER_TOKEN = 2
+tiktoken_mod: types.ModuleType | None = None
+try:
+    import tiktoken as tiktoken_mod
+except ImportError:
+    tiktoken_mod = None
+
+CHARS_PER_TOKEN = 4
 
 # Table chunks: cap rows so LLM output stays small
 MAX_TABLE_ROWS_PER_CHUNK = 10
@@ -18,8 +27,98 @@ MAX_TABLE_CHUNK_TOKENS = 2500
 MAX_TEXT_CHUNK_TOKENS = 2048
 
 
+class _TiktokenEncoding(Protocol):
+    def encode(self, text: str) -> list[int]: ...
+
+    def decode(self, tokens: list[int]) -> str: ...
+
+
+class _TokenBackend(ABC):
+    @abstractmethod
+    def estimate(self, text: str) -> int:
+        ...
+
+    @abstractmethod
+    def split_text(self, text: str, max_tokens: int, overlap_ratio: float) -> list[str]:
+        ...
+
+
+class _HeuristicBackend(_TokenBackend):
+    def estimate(self, text: str) -> int:
+        return len(text) // CHARS_PER_TOKEN
+
+    def split_text(self, text: str, max_tokens: int, overlap_ratio: float) -> list[str]:
+        max_chars = max_tokens * CHARS_PER_TOKEN
+        overlap_chars = int(max_chars * overlap_ratio)
+        step = max_chars - overlap_chars
+        if step <= 0:
+            step = max_chars
+
+        parts: list[str] = []
+        start = 0
+        while start < len(text):
+            end = start + max_chars
+            parts.append(text[start:end])
+            start += step
+
+        return parts
+
+
+class _TiktokenBackend(_TokenBackend):
+    def __init__(self, encoding: _TiktokenEncoding) -> None:
+        self._enc = encoding
+
+    def estimate(self, text: str) -> int:
+        return len(self._enc.encode(text))
+
+    def split_text(self, text: str, max_tokens: int, overlap_ratio: float) -> list[str]:
+        tokens = self._enc.encode(text)
+        overlap_tokens = int(max_tokens * overlap_ratio)
+        step = max_tokens - overlap_tokens
+        if step <= 0:
+            step = max_tokens
+
+        parts: list[str] = []
+        start = 0
+        while start < len(tokens):
+            end = min(start + max_tokens, len(tokens))
+            parts.append(self._enc.decode(tokens[start:end]))
+            start += step
+
+        return parts
+
+
+_backend: _TokenBackend | None = None
+_backend_key: tuple[str, bool] | None = None
+
+
+def _get_backend() -> _TokenBackend:
+    """Prefer tiktoken when installed and encoding name is valid; else char heuristic."""
+    global _backend, _backend_key
+    cfg = load_config()
+    encoding_name = cfg.extraction.tiktoken_encoding
+    use_tiktoken = tiktoken_mod is not None
+    key = (encoding_name, use_tiktoken)
+    if _backend is not None and _backend_key == key:
+        return _backend
+
+    if use_tiktoken:
+        try:
+            assert tiktoken_mod is not None
+            enc = tiktoken_mod.get_encoding(encoding_name)
+            _backend = _TiktokenBackend(enc)
+            _backend_key = key
+            return _backend
+        except KeyError:
+            pass
+
+    _backend = _HeuristicBackend()
+    _backend_key = key
+    return _backend
+
+
 def estimate_tokens(text: str) -> int:
-    return len(text) // CHARS_PER_TOKEN
+    return _get_backend().estimate(text)
 
 
 def _is_table_line(ln: str) -> bool:
@@ -27,7 +126,7 @@ def _is_table_line(ln: str) -> bool:
 
 
 def _is_separator_line(ln: str) -> bool:
-    """True if line is a markdown table separator (| --- | --- | ...), i.e. pipe-line with no letters."""
+    """True if line is a markdown table separator (| --- | ...), i.e. pipe-line with no letters."""
     return _is_table_line(ln) and not re.search(r"[a-zA-Z]", ln)
 
 
@@ -159,20 +258,7 @@ def chunk_pages(
 
 def _split_text(text: str, max_tokens: int, overlap_ratio: float) -> list[str]:
     """Split a large text into overlapping chunks."""
-    max_chars = max_tokens * CHARS_PER_TOKEN
-    overlap_chars = int(max_chars * overlap_ratio)
-    step = max_chars - overlap_chars
-    if step <= 0:
-        step = max_chars
-
-    parts: list[str] = []
-    start = 0
-    while start < len(text):
-        end = start + max_chars
-        parts.append(text[start:end])
-        start += step
-
-    return parts
+    return _get_backend().split_text(text, max_tokens, overlap_ratio)
 
 
 def _merge_segments(

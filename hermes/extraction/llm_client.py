@@ -107,6 +107,8 @@ class LiteLLMClient(BaseLLMClient):
             response_format={"type": "json_object"},
             timeout=self.timeout,
             api_key=self.api_key,
+            num_retries=3,
+            retry_strategy="exponential_backoff_retry",
         )
         elapsed_ms = (time.perf_counter_ns() - start) // 1_000_000
 

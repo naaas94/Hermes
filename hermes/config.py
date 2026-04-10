@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib
@@ -52,6 +53,8 @@ class StorageConfig:
 class ExtractionConfig:
     default_schema: str = "hermes.schemas.examples.generic_table:GenericRow"
     chunk_overlap_ratio: float = 0.1
+    # Used when optional `tiktoken` is installed; OpenAI-style models often match cl100k_base.
+    tiktoken_encoding: str = "cl100k_base"
 
 
 @dataclass(frozen=True)
@@ -75,15 +78,19 @@ def _find_config_file() -> Path | None:
     return None
 
 
-def _parse_config(raw: dict) -> HermesConfig:  # type: ignore[type-arg]
+def _parse_config(raw: dict[str, Any]) -> HermesConfig:
     llm_raw = raw.get("llm", {})
-    litellm_raw = llm_raw.pop("litellm", {})
+    litellm_raw = llm_raw.get("litellm", {})
     litellm_fields = {
         k: v for k, v in litellm_raw.items()
         if k in LiteLLMConfig.__dataclass_fields__
     }
     litellm_cfg = LiteLLMConfig(**litellm_fields)
-    llm_fields = {k: v for k, v in llm_raw.items() if k in LLMConfig.__dataclass_fields__}
+    llm_fields = {
+        k: v
+        for k, v in llm_raw.items()
+        if k in LLMConfig.__dataclass_fields__ and k != "litellm"
+    }
     llm_cfg = LLMConfig(**llm_fields, litellm=litellm_cfg)
 
     norm_raw = raw.get("normalization", {})
@@ -135,4 +142,4 @@ def get_db_path() -> Path:
 
 
 def get_migrations_dir() -> Path:
-    return Path(__file__).parent.parent / "migrations"
+    return Path(__file__).parent / "migrations"
