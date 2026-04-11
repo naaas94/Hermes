@@ -5,6 +5,7 @@
 
 Go over [system-audit.md] with agents and knock lists of TODOs 
     - update 4_10; knocked 20 tasks off, have some more to do and will be done. 
+    - update 4_11: Knocked remaining todos, only some minor or yatch problems remain. 
 
 ## Eval as differentiator
 
