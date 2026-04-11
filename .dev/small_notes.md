@@ -4,3 +4,8 @@
 ## Experiment with chunk size 
     xslx chunk size currently is 180 so 154 chunks per test of 28k ish tokens 
         since we're using cloud we could play around chunk size and potentially token size 
+
+        implemented 4/11 - max table rows 80
+
+
+# 

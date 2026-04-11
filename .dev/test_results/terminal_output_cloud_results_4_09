@@ -1,0 +1,69 @@
+PS C:\Users\Ale\Documents\Repos\Hermes> hermes test
+Hermes Test Suite  provider=litellm  model=gpt-4o-mini  mode=cloud/parallel  workers=4  thinking=off
+──────────────────────────────────────────────────────────────── Test 1: Excel Accuracy & Stream Extraction ────────────────────────────────────────────────────────────────Preflight: test_excel_accuracy_synthetic.xlsx
+  Type: excel | Pages: 1 | ~27727 tokens
+  Normalizing ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+Chunking...
+  154 chunk(s) ready
+  Extracting ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+
+Done! Job 57abb4fc3330: 154 chunks extracted, 0 failed. Status: completed
+──────────────────────────────────────────────────────────────────── Test 2: PDF Stress Test & Chunking ────────────────────────────────────────────────────────────────────Preflight: test_pdf_stress_riscbac.pdf
+  Type: pdf_text | Pages: 43 | ~24167 tokens
+  Normalizing ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+Chunking...
+  11 chunk(s) ready
+  Extracting ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
+
+Done! Job ab2f3132317f: 9 chunks extracted, 2 failed. Status: partial
+─────────────────────────────────────────────────────────────────────── Test Suite Telemetry & Stats ───────────────────────────────────────────────────────────────────────
+
+Excel Accuracy  job=57abb4fc3330  wall=686.72s
+                         Pipeline Stages
+ Stage         ┃ Duration ┃ Detail
+━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ preflight     │    408ms │ type=excel, pages=1, est_tokens=27727
+ normalization │    168ms │ normalized_pages=1, source=excel
+ chunking      │    252ms │ chunks=154, normalized_pages=1
+ extraction    │ 685781ms │ completed_chunks=154, failed_chunks=0
+             LLM Stats
+ Metric              ┃       Value 
+━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━
+ LLM Calls           │         154
+ Repair Attempts     │           0
+ Tokens In           │     159,842
+ Tokens Out          │     144,215
+ Total LLM Time      │ 2,713,328ms
+ Avg Latency/call    │    17,619ms
+ Min Latency         │     5,565ms
+ Max Latency         │   108,246ms
+ Validation Failures │           0
+
+PDF Stress  job=ab2f3132317f  wall=9.15s
+                           Pipeline Stages
+ Stage         ┃ Duration ┃ Detail
+━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ preflight     │    160ms │ type=pdf_text, pages=43, est_tokens=24167
+ normalization │     73ms │ normalized_pages=43, source=pdf_text
+ chunking      │    206ms │ chunks=11, normalized_pages=43
+ extraction    │   8689ms │ completed_chunks=9, failed_chunks=2
+           LLM Stats
+ Metric              ┃    Value 
+━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━
+ LLM Calls           │       15
+ Repair Attempts     │        4
+ Tokens In           │   27,101
+ Tokens Out          │    1,255
+ Total LLM Time      │ 30,050ms
+ Avg Latency/call    │  2,003ms
+ Min Latency         │    557ms
+ Max Latency         │  6,892ms
+ Validation Failures │        6
+────────────────────────────────────────────────────────────────────────────── Suite Summary ─────────────────────────────────────────────────────────────────────────────── Provider         │        litellm
+ Concurrency Mode │ cloud/parallel
+ Workers          │              4
+ Tests Run        │              2
+ Total Wall Time  │        695.87s
+ Total LLM Calls  │            169
+ Total Tokens In  │        186,943
+ Total Tokens Out │        145,470

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from hermes.db import get_connection
-from hermes.models import LLMResponse
+from hermes.models import Chunk, LLMResponse
 
 
 @pytest.fixture()
@@ -136,6 +137,83 @@ def test_full_pipeline_with_pdf(
     stage_names = {s.stage for s in stages}
     assert {"preflight", "normalization", "chunking", "extraction"}.issubset(stage_names)
 
+    conn.close()
+
+
+def test_pipeline_parallel_workers_processes_multiple_chunks(
+    sample_excel: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_llm_response: LLMResponse,
+):
+    """Two chunks + max_workers=2 exercises the ThreadPoolExecutor extraction path."""
+    if not sample_excel.exists():
+        pytest.skip("Run generate_fixtures.py first")
+
+    db_path = tmp_path / "test.db"
+    storage_path = tmp_path / "storage"
+    storage_path.mkdir()
+
+    monkeypatch.setattr("hermes.config.get_storage_base", lambda: storage_path)
+    monkeypatch.setattr("hermes.config.get_db_path", lambda: db_path)
+    monkeypatch.setattr("hermes.db.get_db_path", lambda: db_path)
+    monkeypatch.setattr("hermes.ingestion.storage.get_storage_base", lambda: storage_path)
+
+    def fake_chunk_pages(
+        pages: object,
+        context_window: int | None = None,
+        overlap_ratio: float | None = None,
+    ) -> list[Chunk]:
+        return [
+            Chunk(
+                chunk_index=0,
+                text="chunk zero text",
+                source_pages=[0],
+                estimated_tokens=50,
+            ),
+            Chunk(
+                chunk_index=1,
+                text="chunk one text",
+                source_pages=[0],
+                estimated_tokens=50,
+            ),
+        ]
+
+    mock_client = MagicMock()
+    mock_client.chat.return_value = mock_llm_response
+    mock_client.check_ready.return_value = True
+
+    pool_kwargs: dict[str, int] = {}
+
+    def thread_pool_spy(*args: object, **kwargs: object) -> RealThreadPoolExecutor:
+        pool_kwargs["max_workers"] = int(kwargs.get("max_workers", 0))
+        return RealThreadPoolExecutor(*args, **kwargs)
+
+    with (
+        patch("hermes.extraction.pipeline.chunk_pages", fake_chunk_pages),
+        patch("hermes.extraction.pipeline.create_llm_client", return_value=mock_client),
+        patch(
+            "hermes.extraction.pipeline.ThreadPoolExecutor",
+            side_effect=thread_pool_spy,
+        ),
+    ):
+        from hermes.extraction.pipeline import run_pipeline
+
+        job_id = run_pipeline(
+            sample_excel,
+            schema_ref="hermes.schemas.examples.vehicle_fleet:VehicleRecord",
+            max_workers=2,
+        )
+
+    assert job_id
+    assert mock_client.chat.call_count == 2
+    assert pool_kwargs.get("max_workers") == 2
+
+    from hermes.db import get_job
+    conn = get_connection(db_path)
+    job = get_job(conn, job_id)
+    assert job is not None
+    assert job.status.value in ("completed", "partial")
     conn.close()
 
 

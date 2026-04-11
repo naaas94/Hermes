@@ -1,6 +1,6 @@
 # Hermes System Audit
 
-**Document status:** This file is the **original 2026 audit snapshot** (full text preserved below). A **quick reference** at the top segments what is **still open or to review** versus what has been **remediated**; see **`[fixed]`** at the bottom for the detailed remediation map (aligned with `CHANGELOG.md` as of 2026_04_10).
+**Document status:** This file is the **original 2026 audit snapshot** (full text preserved below). A **quick reference** at the top segments what is **still open or to review** versus what has been **remediated**; see **`[fixed]`** at the bottom for the detailed remediation map (aligned with `CHANGELOG.md` as of 2026_04_11).
 
 ---
 
@@ -15,8 +15,8 @@ These items from the audit are **not** fully closed in code/docs, are **partial*
 | **§5 / CLI** | `hermes list-schemas` | Not implemented; discoverability gap called out in §5. |
 | **§4a** | SQLite write serialization under high `--workers` | **Architectural:** WAL still serializes writes; acceptable for local CLI; no code change required unless you target higher concurrency. |
 | **§4c** | Excel preflight scans all rows | Token estimate still iterates all rows/sheets; sampling not implemented. |
-| **§5** | Test coverage gaps | CI + `generate_fixtures` helps; gaps may remain (OCR pipeline, LiteLLM client, concurrent extraction, `hermes test` / `export` CLI, table chunking, `hermes init` flow, etc.). |
-| **§5** | OCR timeout | Not implemented; complex pages could still hang. |
+| **§5** | Test coverage (remaining) | CI covers table markdown chunking, mocked `pdf_ocr`, LiteLLM client (mocked), `export` / `init` / `version` CLI, and parallel extraction wiring. **`hermes test`** (benchmark; needs datasets + LLM) and **real Surya/EasyOCR** stacks remain optional / manual. |
+| **§5** | OCR wall time | **`ocr_timeout_seconds`** (0 = unlimited) bounds wait via a side thread; native OCR may still run until completion in the worker. |
 | **§5** | Job resumption after crash | Not implemented (distinct from SIGINT graceful shutdown, which **is** implemented). |
 | **§5** | Idempotency / dedup | Same file still creates new jobs; content-hash dedup not implemented. |
 | **§6** | Security: document trusted schema refs | Confirm `README.md` explicitly states that `module:Class` schema refs are trusted (same as running Python). |
@@ -161,6 +161,26 @@ When `--workers > 1`, each worker thread opens its own SQLite connection. WAL mo
 
 For a 100K-row spreadsheet, this scans everything just for an estimate. Consider sampling (first N rows x sheet count).
 
+**Remediation strat:**
+
+    1. **Clarify the goal.** Preflight’s `estimated_tokens` is a **rough hint** (same `// 4` heuristic as elsewhere), not a billing-quality count. Decide whether optimization targets **wall-clock** only, **CPU** only, or both — and what maximum error vs full scan is acceptable (e.g. ±20–30% for huge files only).
+
+    2. **Measure before changing behavior.** On representative workbooks (including large synthetics and `test_excel_accuracy_synthetic.xlsx`-style fixtures), record **full-scan** `total_chars` and tokens as the reference. Then prototype **sampling strategies** offline and compare error distribution — same approach as characterizing PDF preflight (PDF classification already samples the first 5 pages in `detect_file_type`).
+
+    3. **Sampling options to try (can combine):**
+    - **Prefix sample:** First *N* rows per sheet (cheap; biased if headers/summary rows dominate).
+    - **Capped iteration:** Stop after *M* total rows across the workbook, then **extrapolate** using `openpyxl`’s `max_row` / dimensions (if trustworthy for the file) or sheet row counts — `chars_per_row_sample * estimated_total_rows`.
+    - **Hybrid:** Full scan if `max_row` (or file size) is below a threshold; sample only above that threshold.
+    - **Per-sheet budget:** Allocate a fixed row budget across sheets proportional to `max_row` or evenly.
+
+    4. **Implementation notes:** `read_only` + `iter_rows` can take `max_row=` to bound reads. Verify behavior on **empty sheets**, **sparse** tables, and **very wide** rows (a few cells may dominate char count). Keep **closing** the workbook and preserve current failure mode (`ImportError` → zeros).
+
+    5. **Align with chunking.** If chunker/token math changes (`CHARS_PER_TOKEN`, tiktoken), preflight should stay **consistent** in spirit so “~tokens” in the CLI does not diverge wildly from actual chunk counts — re-check after any tokenizer change.
+
+    6. **Tests / guardrails:** A small **committed** fixture with known char totals (full scan) gives a regression anchor. Optional: assert sampled estimate stays within a chosen band vs full scan for that fixture — or document sampling as approximate-only and test determinism + bounds.
+
+    7. **Optional UX:** If estimates become approximate, consider labeling in CLI output (“approx.”) or logging when the fast path was used — only if confusion shows up in practice.
+
 ### 4d. No rate limiting for cloud LLM providers
 
 When using LiteLLM with `--workers 4+`, there's no rate limiting. OpenAI/Anthropic APIs will return 429s. The code catches exceptions but doesn't distinguish retriable 429s from fatal errors.
@@ -304,7 +324,8 @@ The following maps **audit IDs** to **what changed**. Line numbers in code block
 |----|-------------|
 | **Infra** | `.github/workflows/ci.yml`, `hermes/py.typed`, hatch wheel + `hermes/migrations/`. |
 | **CLI** | Global `--verbose` / `-v`; `hermes clean` with `--all`, `--force`, `typer.confirm`; normalization **Progress** + `on_page_done` in normalizers. **`list-schemas` not implemented.** |
-| **Resilience** | SIGINT during extraction: `threading.Event`, partial/failed final status, stage detail `interrupted`; threaded pool shutdown with cancel. **Resume-after-crash, OCR timeout, dedup — not implemented.** |
+| **§5 tests** | Table chunking, mocked `pdf_ocr` + OCR timeout, LiteLLM client unit tests, Typer smoke tests for `export` / `init` / `version`, pipeline parallel `ThreadPoolExecutor` smoke (`tests/`). |
+| **Resilience** | SIGINT during extraction: `threading.Event`, partial/failed final status, stage detail `interrupted`; threaded pool shutdown with cancel. **Per-page OCR timeout** via `normalization.ocr_timeout_seconds` + `Future.result(timeout=...)` (does not reliably kill native OCR). **Resume-after-crash, dedup — not implemented.** |
 | **DLQ** | After `retry`, jobs can promote to `completed` when DLQ empty for job, status was partial/failed, and distinct extraction chunk count matches `total_chunks` (see `CHANGELOG.md` / `count_distinct_extraction_chunk_indices`). |
 
 ### Section 6 — Security

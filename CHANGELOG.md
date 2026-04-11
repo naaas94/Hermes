@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026_04_11
+
+- **OCR timeout** (`hermes/normalization/pdf_ocr.py`, `hermes/config.py`): optional **`normalization.ocr_timeout_seconds`** (default **0** = no limit). When set, OCR runs in a worker thread with **`Future.result(timeout=...)`**; on timeout the page gets placeholder text and processing continues. **`shutdown(wait=False)`** avoids blocking the main thread until native OCR returns (the worker may still run). **Rationale:** pathological scans should not hang the CLI indefinitely.
+- **Tests** (`tests/`): table-heavy **`chunk_pages`** coverage; **`LiteLLMClient`** unit tests with mocked `litellm.completion`; **`pdf_ocr`** tests with stubbed OCR and slow-OCR timeout; Typer **`CliRunner`** smoke tests for **`version`**, **`init`** (isolated home), **`export`**; pipeline test forcing two chunks with **`max_workers=2`** and asserting **`ThreadPoolExecutor(max_workers=2)`**. **`hermes test`** (full benchmark) remains out of default CI by design.
+- **Chunking** (`hermes/normalization/chunker.py`): raised **`MAX_TABLE_ROWS_PER_CHUNK`** from **10** to **80** for oversized markdown tables. **Rationale:** smaller batches were tuned for weak local inference; larger row batches reduce LLM calls per sheet when using cloud models (e.g. gpt-4o-mini) while keeping each chunk’s JSON output bounded by the schema; tune further if validation or timeouts regress on very wide rows.
+
 ## 2026_04_10
 
 - **PEP 561** (`hermes/py.typed`): empty marker so the package is treated as typed when installed. **Rationale:** without it, tools like mypy may not use `hermes`’s annotations in dependent projects (PEP 561).

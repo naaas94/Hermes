@@ -14,6 +14,7 @@ def test_default_config():
     assert cfg.llm.litellm.model == "gpt-4o-mini"
     assert cfg.storage.base_path == "./storage"
     assert cfg.extraction.default_schema == "hermes.schemas.examples.generic_table:GenericRow"
+    assert cfg.normalization.ocr_timeout_seconds == 0
 
 
 def test_parse_config_from_dict():
@@ -28,6 +29,7 @@ def test_parse_config_from_dict():
             },
         },
         "storage": {"base_path": "/tmp/hermes"},
+        "normalization": {"ocr_timeout_seconds": 120},
     }
     cfg = _parse_config(raw)
     assert cfg.llm.provider == "litellm"
@@ -37,6 +39,7 @@ def test_parse_config_from_dict():
     assert cfg.llm.litellm.api_key_env == "MY_KEY"
     assert cfg.storage.base_path == "/tmp/hermes"
     assert cfg.normalization.ocr_engine == "surya"  # default preserved
+    assert cfg.normalization.ocr_timeout_seconds == 120
 
 
 def test_parse_config_empty_dict():
