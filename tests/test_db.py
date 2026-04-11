@@ -8,16 +8,20 @@ from hermes.db import (
     count_distinct_extraction_chunk_indices,
     create_job,
     get_job,
+    get_llm_runs_for_job,
     get_results_for_job,
     get_stages_for_job,
     get_successful_chunk_indices,
+    insert_extraction_contract,
     list_jobs,
+    resolve_or_create_extraction_contract,
     save_failed,
     save_llm_run,
     save_pipeline_stage,
     save_result,
     update_job_status,
 )
+from hermes.extraction.contract_identity import canonical_json_schema, compute_contract_id
 from hermes.models import (
     ExtractionResult,
     FailedExtraction,
@@ -40,15 +44,15 @@ def test_init_db_creates_tables(tmp_db: sqlite3.Connection):
     assert "failed_extractions" in table_names
     assert "pipeline_stages" in table_names
     assert "schema_version" in table_names
+    assert "extraction_contracts" in table_names
 
 
 def test_schema_version_applied(tmp_db: sqlite3.Connection):
-    row = tmp_db.execute("SELECT version FROM schema_version WHERE version = 1").fetchone()
-    assert row is not None
-    row = tmp_db.execute("SELECT version FROM schema_version WHERE version = 2").fetchone()
-    assert row is not None
-    row = tmp_db.execute("SELECT version FROM schema_version WHERE version = 3").fetchone()
-    assert row is not None
+    for v in (1, 2, 3, 4, 5):
+        row = tmp_db.execute(
+            "SELECT version FROM schema_version WHERE version = ?", (v,)
+        ).fetchone()
+        assert row is not None
 
 
 def test_create_and_get_job(tmp_db: sqlite3.Connection):
@@ -203,6 +207,64 @@ def test_save_failed_extraction(tmp_db: sqlite3.Connection):
         last_error="JSON parse error", retry_count=3,
     )
     save_failed(tmp_db, fail)
+
+
+def test_extraction_contract_round_trip(tmp_db: sqlite3.Connection):
+    schema_dict = {"type": "object", "properties": {"x": {"type": "string"}}}
+    pv = "prompt_v_test"
+    sref = "some.module:Row"
+    canonical, sha = canonical_json_schema(schema_dict)
+    cid = compute_contract_id(canonical.encode("utf-8"), pv, sref)
+    insert_extraction_contract(tmp_db, cid, pv, sref, canonical, sha)
+
+    job = Job(
+        id="contract_job",
+        file_name="f.xlsx",
+        file_type=FileType.EXCEL,
+        schema_class=sref,
+        contract_id=cid,
+    )
+    create_job(tmp_db, job)
+
+    run = LLMRun(
+        job_id="contract_job",
+        contract_id=cid,
+        chunk_index=0,
+        model="m",
+        prompt_version=pv,
+    )
+    save_llm_run(tmp_db, run)
+
+    res = ExtractionResult(
+        job_id="contract_job",
+        contract_id=cid,
+        chunk_index=0,
+        record_json="[]",
+        model="m",
+        prompt_version=pv,
+    )
+    save_result(tmp_db, res)
+
+    got = get_job(tmp_db, "contract_job")
+    assert got is not None
+    assert got.contract_id == cid
+
+    runs = get_llm_runs_for_job(tmp_db, "contract_job")
+    assert len(runs) == 1
+    assert runs[0].contract_id == cid
+
+    results = get_results_for_job(tmp_db, "contract_job")
+    assert len(results) == 1
+    assert results[0].contract_id == cid
+
+
+def test_resolve_or_create_extraction_contract_dedup(tmp_db: sqlite3.Connection):
+    d = {"type": "object"}
+    pv = "pv_dedup"
+    ref = "m:C"
+    c1 = resolve_or_create_extraction_contract(tmp_db, ref, d, pv)
+    c2 = resolve_or_create_extraction_contract(tmp_db, ref, d, pv)
+    assert c1 == c2
 
 
 def test_save_and_get_pipeline_stage(tmp_db: sqlite3.Connection):

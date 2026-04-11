@@ -14,6 +14,7 @@ Hermes converts messy Excel spreadsheets, text-layer PDFs, and scanned documents
 - **Observable** — Rich progress for normalization and extraction; every LLM call is logged with tokens, latency, prompt version, and validation status.
 - **Self-healing** — failed extractions enter a dead-letter queue and can be replayed; `retry` promotes jobs to completed only when every chunk has a result and the DLQ is clear.
 - **Concurrency-aware** — sequential for local models, parallel with bounded workers for cloud APIs.
+- **Extraction contracts** — jobs, LLM runs, and extraction results reference a stored **JSON Schema snapshot** and **prompt version** via a content-addressed **`contract_id`** (canonical schema string, deduplicated when identical). Makes it explicit which schema + prompt combination produced each row.
 
 ## Installation
 
@@ -249,6 +250,10 @@ Hermes is designed for large documents on modest hardware:
 - **Ctrl+C** stops extraction cooperatively: the job can be left **partial** or **failed** with progress saved, not stuck in “extracting”
 - **`hermes extract --resume <job_id>`** continues LLM extraction after interrupt or crash once chunking has completed (see §8 above)
 - All inter-stage communication uses file paths, never raw bytes
+
+### Extraction contracts (SQLite)
+
+The database includes an **`extraction_contracts`** table (migration `005`) and nullable **`contract_id`** columns on **`jobs`**, **`llm_runs`**, and **`extraction_results`**. After chunking and before the first LLM write, Hermes inserts or reuses a contract row: canonical JSON Schema text, its SHA-256, the current **`get_current_prompt_version()`**, and the **`module:Class`** schema ref. The job row is updated, then every LLM run and extraction result for that extract carries the same **`contract_id`**. Older databases upgraded in place keep **`NULL`** on legacy rows; **`hermes retry`** and **`extract --resume`** attach a contract when missing before new writes.
 
 ### Observability
 

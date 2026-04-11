@@ -27,10 +27,12 @@ from hermes.db import (
     get_successful_chunk_indices,
     open_connection,
     open_db,
+    resolve_or_create_extraction_contract,
     save_failed,
     save_llm_run,
     save_pipeline_stage,
     save_result,
+    update_job_contract_id,
     update_job_status,
 )
 from hermes.dedup import effective_llm_model, sha256_file_hex
@@ -226,12 +228,22 @@ def _resume_pipeline_inner(
 
         update_job_status(conn, job_id, JobStatus.EXTRACTING, total_chunks=len(chunks))
 
+        if job.contract_id:
+            contract_id = job.contract_id
+        else:
+            prompt_ver = get_current_prompt_version()
+            contract_id = resolve_or_create_extraction_contract(
+                conn, schema_ref, json_schema, prompt_ver
+            )
+            update_job_contract_id(conn, job_id, contract_id)
+
         base_completed = len(done)
         base_failed = job.failed_chunks
 
         ext = _run_extraction_phase(
             conn=conn,
             job_id=job_id,
+            contract_id=contract_id,
             work_chunks=pending,
             schema_class=schema_class,
             json_schema=json_schema,
@@ -570,10 +582,17 @@ def _run_pipeline_inner(
             chunk_path = chunk_dir / f"chunk_{chunk.chunk_index}.md"
             chunk_path.write_text(chunk.text, encoding="utf-8")
 
+        prompt_ver = get_current_prompt_version()
+        contract_id = resolve_or_create_extraction_contract(
+            conn, schema_ref, json_schema, prompt_ver
+        )
+        update_job_contract_id(conn, job_id, contract_id)
+
         # 6. LLM extraction
         ext = _run_extraction_phase(
             conn=conn,
             job_id=job_id,
+            contract_id=contract_id,
             work_chunks=chunks,
             schema_class=schema_class,
             json_schema=json_schema,
@@ -677,6 +696,7 @@ def _run_pipeline_inner(
 def _run_extraction_phase(
     conn: sqlite3.Connection,
     job_id: str,
+    contract_id: str,
     work_chunks: list[Chunk],
     schema_class: type[Any],
     json_schema: dict[str, Any],
@@ -737,6 +757,7 @@ def _run_extraction_phase(
                         llm_client,
                         c,
                         job_id,
+                        contract_id,
                         schema_class,
                         json_schema,
                         prompt_ver,
@@ -788,6 +809,7 @@ def _run_extraction_phase(
                     llm_client,
                     chunk,
                     job_id,
+                    contract_id,
                     schema_class,
                     json_schema,
                     prompt_ver,
@@ -883,6 +905,7 @@ def _process_chunk(
     llm_client: BaseLLMClient,
     chunk: Chunk,
     job_id: str,
+    contract_id: str,
     schema_class: type[Any],
     json_schema: dict[str, Any],
     prompt_version: str,
@@ -908,6 +931,7 @@ def _process_chunk(
             is_last = i == len(result.all_responses) - 1
             run = LLMRun(
                 job_id=job_id,
+                contract_id=contract_id,
                 chunk_index=chunk.chunk_index,
                 run_type="extraction" if i == 0 else "repair",
                 model=resp.model,
@@ -928,6 +952,7 @@ def _process_chunk(
             source_pages = ",".join(str(p) for p in chunk.source_pages)
             extraction = ExtractionResult(
                 job_id=job_id,
+                contract_id=contract_id,
                 chunk_index=chunk.chunk_index,
                 source_pages=source_pages,
                 record_json=records_json,
