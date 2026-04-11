@@ -88,7 +88,8 @@ def create_job(conn: sqlite3.Connection, job: Job) -> Job:
     conn.execute(
         "INSERT INTO jobs (id, file_name, file_type, page_count, has_text_layer, "
         "schema_class, normalization_error, pages_spec, content_sha256, llm_model_key, "
-        "contract_id, status, total_chunks, completed_chunks, failed_chunks) VALUES (?, ?, ?, ?, ?, "
+        "contract_id, status, total_chunks, completed_chunks, failed_chunks) "
+        "VALUES (?, ?, ?, ?, ?, "
         "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             job.id, job.file_name, job.file_type.value, job.page_count,
