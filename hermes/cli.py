@@ -408,9 +408,11 @@ def retry(
         get_failed_for_job,
         get_job,
         open_db,
+        resolve_or_create_extraction_contract,
         save_llm_run,
         save_result,
         update_failed_status,
+        update_job_contract_id,
         update_job_status,
     )
     from hermes.extraction.llm_client import create_llm_client
@@ -453,6 +455,10 @@ def retry(
             schema_ref = schema or job.schema_class
             schema_class = load_schema(schema_ref)
             json_schema = get_json_schema(schema_class)
+            contract_id = resolve_or_create_extraction_contract(
+                conn, schema_ref, json_schema, prompt_ver
+            )
+            update_job_contract_id(conn, fail.job_id, contract_id)
 
             storage_base = get_storage_base()
             chunk_path = storage_base / fail.job_id / fail.chunk_text_uri
@@ -480,7 +486,9 @@ def retry(
             for i, resp in enumerate(result.all_responses):
                 is_last = i == len(result.all_responses) - 1
                 run = LLMRun(
-                    job_id=fail.job_id, chunk_index=fail.chunk_index,
+                    job_id=fail.job_id,
+                    contract_id=contract_id,
+                    chunk_index=fail.chunk_index,
                     run_type="retry" if i == 0 else "repair",
                     model=resp.model, prompt_version=prompt_ver,
                     tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
@@ -495,7 +503,9 @@ def retry(
                 import json as _json
                 records_json = _json.dumps([r.model_dump(mode="json") for r in result.validated])
                 extraction = ExtractionResult(
-                    job_id=fail.job_id, chunk_index=fail.chunk_index,
+                    job_id=fail.job_id,
+                    contract_id=contract_id,
+                    chunk_index=fail.chunk_index,
                     source_pages="", record_json=records_json,
                     model=llm_response.model, prompt_version=prompt_ver,
                 )

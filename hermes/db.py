@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from hermes.config import get_db_path, get_migrations_dir
+from hermes.extraction.contract_identity import (
+    canonical_json_schema,
+    compute_contract_id,
+)
 from hermes.models import (
     DLQStatus,
     ExtractionResult,
@@ -84,14 +88,15 @@ def create_job(conn: sqlite3.Connection, job: Job) -> Job:
     conn.execute(
         "INSERT INTO jobs (id, file_name, file_type, page_count, has_text_layer, "
         "schema_class, normalization_error, pages_spec, content_sha256, llm_model_key, "
-        "status, total_chunks, completed_chunks, failed_chunks) VALUES (?, ?, ?, ?, ?, "
-        "?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "contract_id, status, total_chunks, completed_chunks, failed_chunks) VALUES (?, ?, ?, ?, ?, "
+        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             job.id, job.file_name, job.file_type.value, job.page_count,
             int(job.has_text_layer), job.schema_class, job.normalization_error,
             job.pages_spec or "",
             job.content_sha256 or "",
             job.llm_model_key or "",
+            job.contract_id,
             job.status.value,
             job.total_chunks, job.completed_chunks, job.failed_chunks,
         ),
@@ -186,6 +191,9 @@ def _row_to_job(row: sqlite3.Row) -> Job:
     llm_model_key = ""
     if "llm_model_key" in row.keys() and row["llm_model_key"] is not None:
         llm_model_key = str(row["llm_model_key"])
+    contract_id: str | None = None
+    if "contract_id" in row.keys() and row["contract_id"] is not None:
+        contract_id = str(row["contract_id"])
 
     return Job(
         id=row["id"],
@@ -198,6 +206,7 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         pages_spec=pages_spec,
         content_sha256=content_sha256,
         llm_model_key=llm_model_key,
+        contract_id=contract_id,
         status=JobStatus(row["status"]),
         total_chunks=row["total_chunks"] or 0,
         completed_chunks=row["completed_chunks"] or 0,
@@ -207,17 +216,101 @@ def _row_to_job(row: sqlite3.Row) -> Job:
     )
 
 
+# ── Extraction contracts ──────────────────────────────────────────────
+
+
+def insert_extraction_contract(
+    conn: sqlite3.Connection,
+    contract_id: str,
+    prompt_version: str,
+    schema_class: str,
+    json_schema: str,
+    json_schema_sha256: str,
+    *,
+    commit: bool = True,
+) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO extraction_contracts "
+        "(contract_id, prompt_version, schema_class, json_schema, json_schema_sha256) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (contract_id, prompt_version, schema_class, json_schema, json_schema_sha256),
+    )
+    if commit:
+        conn.commit()
+
+
+def get_contract_id_by_sha256_prompt_and_schema(
+    conn: sqlite3.Connection,
+    json_schema_sha256: str,
+    prompt_version: str,
+    schema_class: str,
+) -> str | None:
+    row = conn.execute(
+        "SELECT contract_id FROM extraction_contracts "
+        "WHERE json_schema_sha256 = ? AND prompt_version = ? AND schema_class = ?",
+        (json_schema_sha256, prompt_version, schema_class),
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
+def update_job_contract_id(
+    conn: sqlite3.Connection, job_id: str, contract_id: str, *, commit: bool = True
+) -> None:
+    conn.execute(
+        "UPDATE jobs SET contract_id = ? WHERE id = ?",
+        (contract_id, job_id),
+    )
+    if commit:
+        conn.commit()
+
+
+def resolve_or_create_extraction_contract(
+    conn: sqlite3.Connection,
+    schema_ref: str,
+    json_schema_dict: dict[str, Any],
+    prompt_version: str,
+    *,
+    dedup: bool = True,
+) -> str:
+    """Return ``contract_id``, inserting into ``extraction_contracts`` if needed."""
+    canonical_json, sha256_hex = canonical_json_schema(json_schema_dict)
+    canonical_utf8 = canonical_json.encode("utf-8")
+    if dedup:
+        existing = get_contract_id_by_sha256_prompt_and_schema(
+            conn, sha256_hex, prompt_version, schema_ref
+        )
+        if existing is not None:
+            return existing
+    contract_id = compute_contract_id(canonical_utf8, prompt_version, schema_ref)
+    insert_extraction_contract(
+        conn,
+        contract_id,
+        prompt_version,
+        schema_ref,
+        canonical_json,
+        sha256_hex,
+        commit=False,
+    )
+    conn.commit()
+    return contract_id
+
+
 # ── Extraction Results ────────────────────────────────────────────────
 
 def save_result(
     conn: sqlite3.Connection, result: ExtractionResult, *, commit: bool = True
 ) -> None:
     conn.execute(
-        "INSERT INTO extraction_results (job_id, chunk_index, source_pages, "
-        "record_json, model, prompt_version) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO extraction_results (job_id, contract_id, chunk_index, source_pages, "
+        "record_json, model, prompt_version) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (
-            result.job_id, result.chunk_index, result.source_pages,
-            result.record_json, result.model, result.prompt_version,
+            result.job_id,
+            result.contract_id,
+            result.chunk_index,
+            result.source_pages,
+            result.record_json,
+            result.model,
+            result.prompt_version,
         ),
     )
     if commit:
@@ -231,7 +324,14 @@ def get_results_for_job(conn: sqlite3.Connection, job_id: str) -> list[Extractio
     ).fetchall()
     return [
         ExtractionResult(
-            id=r["id"], job_id=r["job_id"], chunk_index=r["chunk_index"],
+            id=r["id"],
+            job_id=r["job_id"],
+            contract_id=(
+                str(r["contract_id"])
+                if "contract_id" in r.keys() and r["contract_id"] is not None
+                else None
+            ),
+            chunk_index=r["chunk_index"],
             source_pages=r["source_pages"] or "", record_json=r["record_json"],
             model=r["model"] or "", prompt_version=r["prompt_version"] or "",
             created_at=r["created_at"],
@@ -268,14 +368,22 @@ def save_llm_run(
     conn: sqlite3.Connection, run: LLMRun, *, commit: bool = True
 ) -> None:
     conn.execute(
-        "INSERT INTO llm_runs (job_id, chunk_index, run_type, model, prompt_version, "
+        "INSERT INTO llm_runs (job_id, contract_id, chunk_index, run_type, model, prompt_version, "
         "tokens_in, tokens_out, total_latency_ms, validation_passed, "
-        "validation_error, raw_output) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "validation_error, raw_output) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            run.job_id, run.chunk_index, run.run_type, run.model,
-            run.prompt_version, run.tokens_in, run.tokens_out,
-            run.total_latency_ms, int(run.validation_passed),
-            run.validation_error, run.raw_output,
+            run.job_id,
+            run.contract_id,
+            run.chunk_index,
+            run.run_type,
+            run.model,
+            run.prompt_version,
+            run.tokens_in,
+            run.tokens_out,
+            run.total_latency_ms,
+            int(run.validation_passed),
+            run.validation_error,
+            run.raw_output,
         ),
     )
     if commit:
@@ -381,10 +489,19 @@ def get_llm_runs_for_job(conn: sqlite3.Connection, job_id: str) -> list[LLMRun]:
     ).fetchall()
     return [
         LLMRun(
-            id=r["id"], job_id=r["job_id"], chunk_index=r["chunk_index"],
-            run_type=r["run_type"], model=r["model"] or "",
+            id=r["id"],
+            job_id=r["job_id"],
+            contract_id=(
+                str(r["contract_id"])
+                if "contract_id" in r.keys() and r["contract_id"] is not None
+                else None
+            ),
+            chunk_index=r["chunk_index"],
+            run_type=r["run_type"],
+            model=r["model"] or "",
             prompt_version=r["prompt_version"] or "",
-            tokens_in=r["tokens_in"] or 0, tokens_out=r["tokens_out"] or 0,
+            tokens_in=r["tokens_in"] or 0,
+            tokens_out=r["tokens_out"] or 0,
             total_latency_ms=r["total_latency_ms"] or 0,
             validation_passed=bool(r["validation_passed"]),
             validation_error=r["validation_error"] or "",

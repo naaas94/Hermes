@@ -75,6 +75,7 @@ class Job(BaseModel):
     pages_spec: str = ""
     content_sha256: str = ""
     llm_model_key: str = ""
+    contract_id: str | None = None
     status: JobStatus = JobStatus.QUEUED
     total_chunks: int = 0
     completed_chunks: int = 0
@@ -86,6 +87,7 @@ class Job(BaseModel):
 class ExtractionResult(BaseModel):
     id: int | None = None
     job_id: str
+    contract_id: str | None = None
     chunk_index: int
     source_pages: str = ""
     record_json: str = ""
@@ -97,6 +99,7 @@ class ExtractionResult(BaseModel):
 class LLMRun(BaseModel):
     id: int | None = None
     job_id: str
+    contract_id: str | None = None
     chunk_index: int
     run_type: str = "extraction"
     model: str = ""

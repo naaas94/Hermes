@@ -76,14 +76,20 @@ def test_full_pipeline_with_excel(
 
     assert job_id
 
-    from hermes.db import get_job, get_results_for_job, get_stages_for_job
+    from hermes.db import get_job, get_llm_runs_for_job, get_results_for_job, get_stages_for_job
     conn = get_connection(db_path)
     job = get_job(conn, job_id)
     assert job is not None
     assert job.status.value in ("completed", "partial")
+    assert job.contract_id is not None
 
     results = get_results_for_job(conn, job_id)
     assert len(results) >= 1
+    assert all(r.contract_id == job.contract_id for r in results)
+
+    runs = get_llm_runs_for_job(conn, job_id)
+    assert runs
+    assert all(r.contract_id == job.contract_id for r in runs)
 
     records = json.loads(results[0].record_json)
     assert len(records) == 2
@@ -127,11 +133,19 @@ def test_full_pipeline_with_pdf(
 
     assert job_id
 
-    from hermes.db import get_job, get_stages_for_job
+    from hermes.db import get_job, get_llm_runs_for_job, get_results_for_job, get_stages_for_job
     conn = get_connection(db_path)
     job = get_job(conn, job_id)
     assert job is not None
     assert job.status.value in ("completed", "partial")
+    assert job.contract_id is not None
+
+    results = get_results_for_job(conn, job_id)
+    assert results
+    assert all(r.contract_id == job.contract_id for r in results)
+    runs = get_llm_runs_for_job(conn, job_id)
+    assert runs
+    assert all(r.contract_id == job.contract_id for r in runs)
 
     stages = get_stages_for_job(conn, job_id)
     stage_names = {s.stage for s in stages}
@@ -209,11 +223,16 @@ def test_pipeline_parallel_workers_processes_multiple_chunks(
     assert mock_client.chat.call_count == 2
     assert pool_kwargs.get("max_workers") == 2
 
-    from hermes.db import get_job
+    from hermes.db import get_job, get_llm_runs_for_job, get_results_for_job
     conn = get_connection(db_path)
     job = get_job(conn, job_id)
     assert job is not None
     assert job.status.value in ("completed", "partial")
+    assert job.contract_id is not None
+    for r in get_results_for_job(conn, job_id):
+        assert r.contract_id == job.contract_id
+    for r in get_llm_runs_for_job(conn, job_id):
+        assert r.contract_id == job.contract_id
     conn.close()
 
 
