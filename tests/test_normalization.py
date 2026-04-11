@@ -96,3 +96,67 @@ def test_chunker_empty_pages():
     from hermes.normalization.chunker import chunk_pages
     chunks = chunk_pages([], context_window=8192)
     assert chunks == []
+
+
+def _markdown_table_with_data_rows(n_data_rows: int, cell_pad: int = 100) -> str:
+    """Markdown table: header, separator, then n_data_rows of pipe rows.
+
+    Needs 10+ lines so table mode applies. Wide cells exceed the chunker window.
+    """
+    pad = "x" * cell_pad
+    lines = [
+        "# Sheet1",
+        "",
+        "| ColA | ColB |",
+        "| --- | --- |",
+    ]
+    for i in range(n_data_rows):
+        lines.append(f"| {pad}{i}a | {pad}{i}b |")
+    return "\n".join(lines) + "\n"
+
+
+def test_chunker_splits_oversized_table_by_rows(tmp_path: Path):
+    """Large tables split by row cap (MAX_TABLE_ROWS_PER_CHUNK)."""
+    from hermes.normalization.chunker import MAX_TABLE_ROWS_PER_CHUNK, chunk_pages
+
+    # Enough pipe-rows that _is_table_content is True (>50% table-like, >=10 lines).
+    n_rows = MAX_TABLE_ROWS_PER_CHUNK + 5
+    text = _markdown_table_with_data_rows(n_rows)
+    p = tmp_path / "page_0.md"
+    p.write_text(text, encoding="utf-8")
+
+    pages = [
+        NormalizedPage(
+            page_index=0,
+            markdown_path=p,
+            source_type=FileType.EXCEL,
+            char_count=len(text),
+        ),
+    ]
+
+    chunks = chunk_pages(pages, context_window=8192, overlap_ratio=0.1)
+    assert len(chunks) >= 2
+    # Each chunk should repeat header + separator + up to MAX_TABLE_ROWS_PER_CHUNK data rows
+    for ch in chunks:
+        assert "| ColA | ColB |" in ch.text
+        assert "| --- | --- |" in ch.text
+
+
+def test_chunker_table_small_enough_stays_single_chunk(tmp_path: Path):
+    from hermes.normalization.chunker import chunk_pages
+
+    text = _markdown_table_with_data_rows(12)
+    p = tmp_path / "page_0.md"
+    p.write_text(text, encoding="utf-8")
+
+    pages = [
+        NormalizedPage(
+            page_index=0,
+            markdown_path=p,
+            source_type=FileType.EXCEL,
+            char_count=len(text),
+        ),
+    ]
+
+    chunks = chunk_pages(pages, context_window=8192, overlap_ratio=0.1)
+    assert len(chunks) == 1

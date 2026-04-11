@@ -72,6 +72,9 @@ class Job(BaseModel):
     has_text_layer: bool = False
     schema_class: str = ""
     normalization_error: str = ""
+    pages_spec: str = ""
+    content_sha256: str = ""
+    llm_model_key: str = ""
     status: JobStatus = JobStatus.QUEUED
     total_chunks: int = 0
     completed_chunks: int = 0

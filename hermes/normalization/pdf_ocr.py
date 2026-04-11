@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
@@ -62,7 +64,12 @@ def normalize_pdf_ocr(
         for page_idx in to_visit:
             page = doc[page_idx]
             text, confidence = _ocr_page(
-                page, ocr_fn, cfg.ocr_dpi, cfg.ocr_max_dpi, cfg.ocr_confidence_threshold
+                page,
+                ocr_fn,
+                cfg.ocr_dpi,
+                cfg.ocr_max_dpi,
+                cfg.ocr_confidence_threshold,
+                cfg.ocr_timeout_seconds,
             )
             del page
 
@@ -95,24 +102,57 @@ def _ocr_page(
     start_dpi: int,
     max_dpi: int,
     confidence_threshold: float,
+    ocr_timeout_seconds: int,
 ) -> tuple[str, float]:
     """Render a page at start_dpi, run OCR; retry at max_dpi if confidence is low."""
-    text, confidence = _render_and_ocr(page, ocr_fn, start_dpi)
+    text, confidence = _render_and_ocr(page, ocr_fn, start_dpi, ocr_timeout_seconds)
 
     if confidence < confidence_threshold and start_dpi < max_dpi:
         logger.info(
             "OCR confidence %.2f below threshold %.2f, retrying page at %d DPI",
             confidence, confidence_threshold, max_dpi,
         )
-        text, confidence = _render_and_ocr(page, ocr_fn, max_dpi)
+        text, confidence = _render_and_ocr(page, ocr_fn, max_dpi, ocr_timeout_seconds)
 
     return text, confidence
+
+
+def _invoke_ocr_with_optional_timeout(
+    ocr_fn: Callable[[bytes], tuple[str, float]],
+    img_bytes: bytes,
+    ocr_timeout_seconds: int,
+) -> tuple[str, float]:
+    """Run OCR with an optional wall-clock limit.
+
+    Uses ``ThreadPoolExecutor(max_workers=1)`` and ``Future.result(timeout=...)`` so the
+    caller is not blocked forever. This does **not** reliably cancel work inside native OCR
+    libraries; the worker thread may continue until the engine returns.
+
+    On timeout, ``shutdown(wait=False)`` avoids blocking until the OCR thread finishes (the
+    thread may still run in the background until the native call returns).
+    """
+    if ocr_timeout_seconds <= 0:
+        return ocr_fn(img_bytes)
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    fut = pool.submit(ocr_fn, img_bytes)
+    try:
+        return fut.result(timeout=float(ocr_timeout_seconds))
+    except FutureTimeoutError:
+        logger.warning(
+            "OCR exceeded ocr_timeout_seconds=%s; using placeholder text for this page",
+            ocr_timeout_seconds,
+        )
+        return "*OCR timed out for this page (see logs).*", 0.0
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _render_and_ocr(
     page: _PdfPageLike,
     ocr_fn: Callable[[bytes], tuple[str, float]] | None,
     dpi: int,
+    ocr_timeout_seconds: int,
 ) -> tuple[str, float]:
     """Render page to pixmap and run OCR. Cleans up pixmap immediately."""
     mat = __import__("pymupdf").Matrix(dpi / 72, dpi / 72)
@@ -125,7 +165,7 @@ def _render_and_ocr(
     if ocr_fn is None:
         return "", 0.0
 
-    return ocr_fn(img_bytes)
+    return _invoke_ocr_with_optional_timeout(ocr_fn, img_bytes, ocr_timeout_seconds)
 
 
 def _get_ocr_function(engine: str) -> Callable[[bytes], tuple[str, float]] | None:

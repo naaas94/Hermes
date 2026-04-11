@@ -46,7 +46,10 @@ def app_entry() -> None:
 
 @app.command()
 def extract(
-    path: Path = typer.Argument(..., help="File or directory to extract from."),
+    path: Path | None = typer.Argument(
+        None,
+        help="File or directory to extract from (omit when using --resume).",
+    ),
     schema: str = typer.Option(
         "", "--schema", "-s",
         help=(
@@ -72,9 +75,50 @@ def extract(
             "Omit to process the whole document."
         ),
     ),
+    resume: str = typer.Option(
+        "",
+        "--resume",
+        help=(
+            "Resume LLM extraction for an existing job id after interrupt or crash "
+            "(requires prior chunking; uses stored raw + normalized files)."
+        ),
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help=(
+            "Always create a new job; do not reuse a completed job for the same file "
+            "content, schema, pages, and model."
+        ),
+    ),
 ) -> None:
     """Extract structured data from documents using an LLM."""
-    from hermes.extraction.pipeline import run_pipeline
+    from hermes.extraction.pipeline import resume_pipeline, run_pipeline
+
+    resume_id = resume.strip()
+    if resume_id:
+        if path is not None:
+            console.print(
+                "[yellow]Ignoring PATH when --resume is set "
+                "(source file is read from Hermes storage).[/yellow]"
+            )
+        try:
+            resume_pipeline(
+                resume_id,
+                model_override=model or None,
+                max_workers=workers,
+            )
+        except ValueError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1)
+        return
+
+    if path is None:
+        console.print(
+            "[red]Missing path: provide a file or directory, or use --resume JOB_ID.[/red]"
+        )
+        raise typer.Exit(1)
 
     if not path.exists():
         console.print(f"[red]Path not found:[/red] {path}")
@@ -101,13 +145,25 @@ def extract(
                 model_override=model or None,
                 max_workers=workers,
                 pages_spec=pages.strip() or None,
+                force_new_job=force,
             )
         except Exception as e:
             console.print(f"[red]Error processing {file.name}:[/red] {e}")
 
 
 @app.command()
-def test() -> None:
+def test(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help=(
+            "Always run a full extraction for each fixture. Without this flag, a prior "
+            "completed job for the same file content (same schema, pages, and model) may "
+            "be reused."
+        ),
+    ),
+) -> None:
     """Run standard test datasets with telemetry output."""
     import time
 
@@ -145,7 +201,12 @@ def test() -> None:
     console.rule("[bold cyan]Test 1: Excel Accuracy & Stream Extraction[/bold cyan]")
     start = time.perf_counter()
     try:
-        job_id = run_pipeline(excel_file, schema_ref=schema, max_workers=workers)
+        job_id = run_pipeline(
+            excel_file,
+            schema_ref=schema,
+            max_workers=workers,
+            force_new_job=force,
+        )
         jobs.append(("Excel Accuracy", job_id, time.perf_counter() - start))
     except Exception as e:
         console.print(f"[red]Excel test failed:[/red] {e}")
@@ -154,7 +215,12 @@ def test() -> None:
     console.rule("[bold cyan]Test 2: PDF Stress Test & Chunking[/bold cyan]")
     start = time.perf_counter()
     try:
-        job_id = run_pipeline(pdf_file, schema_ref=schema, max_workers=workers)
+        job_id = run_pipeline(
+            pdf_file,
+            schema_ref=schema,
+            max_workers=workers,
+            force_new_job=force,
+        )
         jobs.append(("PDF Stress", job_id, time.perf_counter() - start))
     except Exception as e:
         console.print(f"[red]PDF test failed:[/red] {e}")
@@ -579,6 +645,33 @@ def init() -> None:
 def version() -> None:
     """Show Hermes version."""
     console.print(f"Hermes v{__version__}")
+
+
+@app.command("list-schemas")
+def list_schemas_cmd(
+    no_packaged: bool = typer.Option(
+        False,
+        "--no-packaged",
+        help="Do not list bundled hermes.schemas.examples.* models.",
+    ),
+    no_user: bool = typer.Option(
+        False,
+        "--no-user",
+        help="Do not list models under ~/.hermes/hermes_user/.",
+    ),
+) -> None:
+    """Print module:Class references usable with --schema."""
+    from hermes.schemas.discover import list_schema_refs
+
+    refs, errors = list_schema_refs(
+        include_packaged=not no_packaged,
+        include_user=not no_user,
+    )
+    err_out = Console(stderr=True)
+    for msg in errors:
+        err_out.print(f"[yellow]Skipping:[/yellow] {msg}")
+    for line in refs:
+        console.print(line)
 
 
 @app.command()

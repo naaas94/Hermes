@@ -21,6 +21,7 @@ ocr_engine = "surya"            # "surya", "easyocr", or "none"
 ocr_dpi = 150                   # Starting DPI for OCR
 ocr_max_dpi = 300               # Max DPI on retry
 ocr_confidence_threshold = 0.7  # Re-OCR at higher DPI if below this
+ocr_timeout_seconds = 0         # Per-page OCR limit; 0 = unlimited (thread-based; may not cancel native work)
 
 [storage]
 base_path = "./storage"

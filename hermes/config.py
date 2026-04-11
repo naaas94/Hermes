@@ -38,6 +38,9 @@ class NormalizationConfig:
     ocr_dpi: int = 150
     ocr_max_dpi: int = 300
     ocr_confidence_threshold: float = 0.7
+    # Per-page OCR wall time; 0 = no limit. Uses a thread + Future.result(timeout=...);
+    # the worker thread may keep running inside native OCR code after timeout.
+    ocr_timeout_seconds: int = 0
 
 
 @dataclass(frozen=True)

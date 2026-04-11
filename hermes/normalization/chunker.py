@@ -19,7 +19,7 @@ except ImportError:
 CHARS_PER_TOKEN = 4
 
 # Table chunks: cap rows so LLM output stays small
-MAX_TABLE_ROWS_PER_CHUNK = 10
+MAX_TABLE_ROWS_PER_CHUNK = 80
 # Max tokens for a table chunk (input); keeps output generation within timeout on small GPUs.
 MAX_TABLE_CHUNK_TOKENS = 2500
 # Cap for non-table (e.g. PDF) chunks so input + system/schema leaves room for full JSON output.
