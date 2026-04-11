@@ -17,4 +17,24 @@ Pytest warns because sqlite3’s default adapter for binding datetime objects is
 
 ---
 
-- print model name when running hermes (be that test or extract or whatever - print it on the terminal)
+- CI: “full stack” vs default pipeline (hermes test + real OCR)
+
+**Flow (what stays out of default CI):** The main workflow installs `.[dev]` only—no `ocr` extra—then ruff, mypy, fixture generation, and pytest. Unit and integration tests mock the LLM (`create_llm_client`) and stub OCR (`_get_ocr_function`), so they exercise routing, chunking, DB, and CLI smoke without network LLM calls or ML stacks. Separately, `hermes test` (Typer command in `hermes/cli.py`) expects `test_excel_accuracy_synthetic.xlsx` and `test_pdf_stress_riscbac.pdf` from `generate_test_datasets.py` and runs the real pipeline with whatever provider is in config—benchmark-scale work (large Excel + multi-page PDF, many chunks/LLM calls). Real Surya/EasyOCR pulls torch-class dependencies and downloads models (e.g. Hugging Face); first run is slow and disk-heavy.
+
+**Tradeoffs:** Putting all of that on every push means longer queues, larger runner disk use, flakiness from model downloads or rate limits, and optional API spend if `litellm` points at a cloud model. That fights the goal of fast, cheap PR feedback. Keeping heavy paths manual or off the default path is intentional, not an accidental gap.
+
+**Paths that don’t run it on every push (pick one or combine):**
+
+- **Branch / event filter:** Run an extra job only on `main` (or merge queue), not on every PR—still automatic, less fan-out.
+- **Schedule + `workflow_dispatch`:** Nightly or weekly full job; humans trigger ad hoc runs when touching OCR or extraction.
+- **Separate workflow file:** e.g. `ci-heavy.yml` so the default `ci.yml` stays the fast gate; heavy workflow is optional or required only for release branches.
+- **Cache aggressively:** `actions/cache` for pip and Hugging Face hub dirs so repeat runs amortize downloads (does not fix cold-start time or torch install size on first run).
+- **Self-hosted or larger runner:** If org policy allows—more disk/RAM for torch and models.
+- **Smoke instead of benchmark:** A tiny one-page scanned PDF + mocked or minimal LLM in a dedicated job approximates OCR wiring without `hermes test` scale (still heavier than today, but bounded).
+- **Document manual checklist:** Release or pre-release QA: install `.[ocr]`, generate datasets, run `hermes test` with intended provider.
+
+Rationale summary: default CI proves correctness of the mocked, fast path; validating the full ML and benchmark path is valuable but belongs in a slower or manual tier so pushes stay cheap and predictable.
+
+---
+
+- | **§5** | `--quiet` | Audit mentioned verbosity; `--verbose` exists; **no `--quiet`** unless added later. |

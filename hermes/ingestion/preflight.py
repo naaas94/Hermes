@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes.models import FileType, PreflightResult
+from hermes.normalization.chunker import CHARS_PER_TOKEN
 
 EXCEL_EXTENSIONS = {".xlsx", ".xlsm", ".xltx", ".xltm"}
 PDF_EXTENSIONS = {".pdf"}
@@ -16,6 +17,60 @@ MAGIC_PDF = b"%PDF"
 
 # If a PDF page yields fewer than this many characters, it's likely scanned
 TEXT_LAYER_CHAR_THRESHOLD = 50
+
+# Excel token estimate: full scan when summed sheet dimensions (max_row per sheet) stay
+# below this; otherwise prefix-sample each sheet and extrapolate from dimensions.
+EXCEL_PREFLIGHT_FULL_SCAN_MAX_ROWS = 10_000
+EXCEL_PREFLIGHT_PREFIX_ROWS_PER_SHEET = 500
+
+
+def _excel_row_chars(row: tuple[Any, ...]) -> int:
+    return sum(len(str(c)) for c in row if c is not None)
+
+
+def _excel_total_dim_rows(wb: Any) -> int:
+    total = 0
+    for name in wb.sheetnames:
+        ws = wb[name]
+        mr = ws.max_row
+        total += max(mr, 1) if mr is not None and mr >= 1 else 1
+    return total
+
+
+def _excel_full_scan_chars(wb: Any) -> int:
+    total_chars = 0
+    for name in wb.sheetnames:
+        ws = wb[name]
+        for row in ws.iter_rows(values_only=True):
+            total_chars += _excel_row_chars(row)
+    return total_chars
+
+
+def _excel_sampled_chars(wb: Any, prefix_rows: int) -> int:
+    total_chars = 0
+    for name in wb.sheetnames:
+        ws = wb[name]
+        mr = ws.max_row
+        if mr is not None and mr >= 1:
+            effective_max = mr
+        else:
+            effective_max = 1
+        cap = min(prefix_rows, effective_max)
+        sample_chars = 0
+        sample_rows = 0
+        for row in ws.iter_rows(values_only=True, max_row=cap):
+            sample_chars += _excel_row_chars(row)
+            sample_rows += 1
+        if sample_rows <= 0:
+            continue
+        total_chars += int((sample_chars / sample_rows) * effective_max)
+    return total_chars
+
+
+def _excel_estimated_chars(wb: Any) -> int:
+    if _excel_total_dim_rows(wb) <= EXCEL_PREFLIGHT_FULL_SCAN_MAX_ROWS:
+        return _excel_full_scan_chars(wb)
+    return _excel_sampled_chars(wb, EXCEL_PREFLIGHT_PREFIX_ROWS_PER_SHEET)
 
 
 def detect_file_type(file_path: Path) -> FileType:
@@ -94,7 +149,7 @@ def run_preflight(file_path: Path) -> PreflightResult:
                     page = doc[i]
                     total_chars += len(page.get_text("text"))
                     del page
-                estimated_tokens = total_chars // 4
+                estimated_tokens = total_chars // CHARS_PER_TOKEN
             doc.close()
         except ImportError:
             pass
@@ -104,12 +159,8 @@ def run_preflight(file_path: Path) -> PreflightResult:
             import openpyxl
             wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
             page_count = len(wb.sheetnames)
-            total_chars = 0
-            for sheet in wb.sheetnames:
-                ws = wb[sheet]
-                for row in ws.iter_rows(values_only=True):
-                    total_chars += sum(len(str(c)) for c in row if c is not None)
-            estimated_tokens = total_chars // 4
+            total_chars = _excel_estimated_chars(wb)
+            estimated_tokens = total_chars // CHARS_PER_TOKEN
             wb.close()
         except ImportError:
             pass

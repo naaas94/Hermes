@@ -79,7 +79,12 @@ hermes extract workbook.xlsx --pages 1,3,5
 
 # Debug logs from pipeline, validator, and LLM client (place -v before the subcommand)
 hermes -v extract invoice.pdf --schema hermes_user.examples.vehicle_fleet:VehicleRecord
+
+# List module:Class references you can pass to --schema (bundled examples + ~/.hermes/hermes_user)
+hermes list-schemas
 ```
+
+Schema refs import Python modules—use only modules you trust (see **Custom Schemas**).
 
 ### 4. Check Status
 
@@ -116,6 +121,17 @@ hermes retry --model gpt-4o-mini  # Retry with a different model
 ```
 
 After replays, a job is marked **completed** only when there are no pending DLQ rows **and** every chunk has an extraction result (an empty DLQ alone does not mean all chunks ran—e.g. after interrupt).
+
+### 8. Resume extraction (same job)
+
+If normalization and chunking already finished but extraction stopped early (crash, kill, or Ctrl+C), you can continue LLM work for **the same job id** without re-normalizing:
+
+```bash
+hermes extract --resume abc123
+hermes extract --resume abc123 --workers 4 --model gpt-4o-mini
+```
+
+Hermes rebuilds chunks from the stored normalized Markdown under the job directory, checks that the chunk count still matches the job metadata (so your extraction config should be unchanged), and skips chunk indices that already have rows in `extraction_results`. The original file path is not required; if you pass one with `--resume`, it is ignored. This complements **`hermes retry`**, which only replays rows already in the dead-letter queue.
 
 ## Testing
 
@@ -212,6 +228,8 @@ Then extract (ensure the directory containing your package is on `PYTHONPATH`, o
 hermes extract invoice.pdf --schema my_schemas.invoice:InvoiceItem
 ```
 
+**Trust:** `--schema` and `default_schema` use the form `module.path:ClassName`. Hermes loads the class by **importing** that Python module. Only pass references to code you trust—treat it like running `python -c "import module.path"`. Hermes does not sandbox schema modules; import-time code in that module can run. Do not point `--schema` at module paths supplied by untrusted users or copied from the internet without review.
+
 ## Architecture
 
 ```
@@ -229,6 +247,7 @@ Hermes is designed for large documents on modest hardware:
 - Chunks are processed sequentially by default (parallel opt-in for cloud)
 - Results are persisted after each chunk, not batched
 - **Ctrl+C** stops extraction cooperatively: the job can be left **partial** or **failed** with progress saved, not stuck in “extracting”
+- **`hermes extract --resume <job_id>`** continues LLM extraction after interrupt or crash once chunking has completed (see §8 above)
 - All inter-stage communication uses file paths, never raw bytes
 
 ### Observability
@@ -248,24 +267,28 @@ Query with: `hermes status <job_id>`
 ```bash
 pip install -e ".[dev]"
 
-# Generate test fixtures (required before pytest; fixtures are gitignored)
+# Match CI locally: ruff, mypy, generate test fixtures, pytest (requires GNU Make — Git Bash / WSL on Windows)
+make ci
+
+# Or run only the test step the same way CI does (fixtures, then pytest)
+make test
+
+# Without Make: generate synthetic files under tests/fixtures/ (gitignored), then run pytest
 python tests/generate_fixtures.py
+pytest
 
 # Generate synthetic test datasets (for hermes test)
 python generate_test_datasets.py
 
-# Static checks (same as CI)
+# Static checks alone (also included in make ci)
 ruff check .
 mypy hermes/
-
-# Run unit tests
-pytest
 
 # Run the full pipeline test suite with telemetry
 hermes test
 ```
 
-CI (GitHub Actions) runs on pushes to `main` and `dev` and on pull requests: editable install with `[dev]`, then `ruff`, `mypy`, fixture generation, and `pytest`. OCR-heavy tests stay skipped unless the optional `ocr` extra is installed.
+CI (GitHub Actions) runs on pushes to `main` and `dev` and on pull requests: editable install with `[dev]`, then `ruff`, `mypy`, `python tests/generate_fixtures.py`, and `pytest`. Output under **`tests/fixtures/`** is listed in **`.gitignore`**. OCR-heavy tests stay skipped unless the optional `ocr` extra is installed.
 
 ## License
 

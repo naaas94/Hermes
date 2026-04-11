@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel
 
 
-def _ensure_user_hermes_on_sys_path() -> None:
+def ensure_user_hermes_on_sys_path() -> None:
     """Prepend ~/.hermes so user packages (e.g. hermes_user.examples) resolve."""
     root = Path.home() / ".hermes"
     root.mkdir(parents=True, exist_ok=True)
@@ -34,7 +34,7 @@ def load_schema(schema_ref: str) -> type[BaseModel]:
 
     module_path, class_name = schema_ref.rsplit(":", 1)
 
-    _ensure_user_hermes_on_sys_path()
+    ensure_user_hermes_on_sys_path()
 
     try:
         module = importlib.import_module(module_path)

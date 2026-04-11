@@ -1,6 +1,6 @@
 # Hermes System Audit
 
-**Document status:** This file is the **original 2026 audit snapshot** (full text preserved below). A **quick reference** at the top segments what is **still open or to review** versus what has been **remediated**; see **`[fixed]`** at the bottom for the detailed remediation map (aligned with `CHANGELOG.md` as of 2026_04_11).
+**Document status:** The **quick reference** below separates **still open** work from **caveats on already-remediated behavior** (the latter are documented in **`[fixed]`** / `CHANGELOG.md`, not as unfixed audit items). Remediated detail is in **`[fixed]`** (aligned with `CHANGELOG.md` as of 2026_04_11).
 
 ---
 
@@ -8,119 +8,47 @@
 
 ### Still open or to review
 
-These items from the audit are **not** fully closed in code/docs, are **partial**, or are **ongoing tradeoffs** (not bugs):
+Work that is **not** fully closed or is **intentionally partial** (not the same as “shipped with a caveat” in **`[fixed]`**):
 
 | Area | Item | Notes |
 |------|------|--------|
-| **§5 / CLI** | `hermes list-schemas` | Not implemented; discoverability gap called out in §5. |
-| **§4a** | SQLite write serialization under high `--workers` | **Architectural:** WAL still serializes writes; acceptable for local CLI; no code change required unless you target higher concurrency. |
-| **§4c** | Excel preflight scans all rows | Token estimate still iterates all rows/sheets; sampling not implemented. |
-| **§5** | Test coverage (remaining) | CI covers table markdown chunking, mocked `pdf_ocr`, LiteLLM client (mocked), `export` / `init` / `version` CLI, and parallel extraction wiring. **`hermes test`** (benchmark; needs datasets + LLM) and **real Surya/EasyOCR** stacks remain optional / manual. |
-| **§5** | OCR wall time | **`ocr_timeout_seconds`** (0 = unlimited) bounds wait via a side thread; native OCR may still run until completion in the worker. |
-| **§5** | Job resumption after crash | Not implemented (distinct from SIGINT graceful shutdown, which **is** implemented). |
-| **§5** | Idempotency / dedup | Same file still creates new jobs; content-hash dedup not implemented. |
-| **§6** | Security: document trusted schema refs | Confirm `README.md` explicitly states that `module:Class` schema refs are trusted (same as running Python). |
-| **§5** | `--quiet` | Audit mentioned verbosity; `--verbose` exists; **no `--quiet`** unless added later. |
-| **§8 P3** | Dockerfile for deployment | Not in repo. |
-| **§8 P2 #18** | Broader test coverage | Ongoing; not fully satisfied by core tests alone. |
+| **Scalability** | **§4a** | SQLite WAL still **serializes writes** under high `--workers`; acceptable for typical local CLI; revisit for higher concurrency or shared DBs. |
+| **Tests** | **§8 P2 #18** | **Broader coverage** still incomplete vs an ideal matrix (optional OCR stack, full CLI surface, etc.). CI covers core paths — see **`[fixed]` §5 tests** for what exists. |
+
+
+### Caveats on remediated behavior *(see `[fixed]`)*
+
+These features **are implemented**; the notes below are **limitations or semantics** already spelled out under **`[fixed]`** — listed here so they are not mistaken for open audit gaps.
+
+| Topic | Where | One-line caveat |
+|-------|--------|-----------------|
+| **Cloud / §4d** | **`[fixed]` §4 `4d`** | **LiteLLM** retries/backoff mitigate many 429s; there is still **no Hermes-level request throttle**. |
+| **Resume** | **`[fixed]` Resilience** | **`hermes extract --resume`** is **extraction-stage** only; **mid-normalization** crash recovery is **out of scope** for now. |
+| **Job dedup** | **`[fixed]` §8 / `CHANGELOG.md`** | Reuse key **omits prompt version**; use **`--force`** or change another keyed field when only prompts change. |
+| **OCR timeout** | **`[fixed]` Resilience** | **`ocr_timeout_seconds`** avoids blocking the CLI; native OCR **may keep running** after timeout. |
+| **Local test fixtures** | **Dev** | CI runs **`generate_fixtures.py`** before **`pytest`**. Locally, run **`make test`** / **`make ci`** or **`python tests/generate_fixtures.py`** before **`pytest`**, or some tests **skip** (see **`[fixed]` §5 Test fixtures**). |
 
 ### Already addressed (summary)
 
-Bugs §1a–§1d, packaging/migrations, CI, `py.typed`, token alignment, dead code removal, `_fail_job`, context managers, optional `tiktoken`, `--verbose`, `hermes clean`, streaming export, DLQ retry job promotion (with chunk-count guard), LiteLLM retries, normalization progress bars, graceful SIGINT during extraction, batched commits per chunk, typing/mypy hardening, `_parse_config` non-mutation, and more — see **`[fixed]`** below.
+Bugs §1a–§1d, packaging/migrations, CI (including **fixture generation before pytest**), `py.typed`, token alignment, dead code removal, `_fail_job`, context managers, optional `tiktoken`, `--verbose`, `hermes clean`, streaming export, DLQ retry job promotion (with chunk-count guard), LiteLLM retries, normalization progress bars, graceful SIGINT during extraction, **extraction-stage resume** (`hermes extract --resume`), **content-hash job dedup** (with `hermes extract --force` / `hermes test --force` to bypass), batched commits per chunk, typing/mypy hardening, `_parse_config` non-mutation, **`hermes list-schemas`**, **Dockerfile** / `.dockerignore`, **large-Excel preflight sampling** (hybrid prefix + extrapolation above row thresholds), optional **OCR page timeout**, **Makefile** / `.gitignore` for **`tests/fixtures/`**, and more — see **`[fixed]`** below.
 
 ---
 
 ## Executive Summary
 
-Hermes is a well-architected local-first CLI for LLM-powered document extraction (~3,200 LoC across 22 Python source files + 2 SQL migrations). The separation of concerns is clean, memory-safety design is deliberate, and the core pipeline works end-to-end. However, several bugs, gaps, and scalability issues need to be addressed before a release.
+Hermes is a local-first CLI for LLM-powered document extraction with a clear pipeline (ingestion → normalization → chunking → extraction → validation → persistence) and deliberate memory-safety choices. Most issues from the original **“fix before release”** audit (bugs §1a–§1d, code quality §2a–§2e, and the bulk of scalability/gaps below) have been **remediated** — see **`[fixed]`**. **Still open:** §4a, broader tests (§8 P2 #18) — see **Still open or to review** above. **Shipped caveats** (retries vs throttle, resume scope, dedup key, OCR timeout semantics) are under **Caveats on remediated behavior** and **`[fixed]`**.
 
 ---
 
-## 1. BUGS (Fix Before Release)
+## 1. BUGS (historical — remediated)
 
-### 1a. Missing space in CLI `test` command output
-
-```119:119:c:\Users\Ale\Documents\Repos\Hermes\hermes\cli.py
-        f"thinking=[bold]{'on' if cfg.llm.enable_thinking else 'off'}[/bold]"
-```
-
-Missing whitespace separator before `thinking=`. It renders as `workers=4thinking=off`.
-
-### 1b. OCR models loaded per-page (critical perf bug)
-
-```125:156:c:\Users\Ale\Documents\Repos\Hermes\hermes\normalization\pdf_ocr.py
-def _ocr_with_surya(img_bytes: bytes) -> tuple[str, float]:
-    # ...
-    det_model = load_det_model()
-    det_processor = load_det_processor()
-    rec_model = load_rec_model()
-    rec_processor = load_rec_processor()
-    # ...
-```
-
-Four heavy ML models are loaded **on every single page**. A 50-page scanned PDF loads/unloads 200 models. These must be loaded once and cached. Same problem in `_ocr_with_easyocr` -- `easyocr.Reader()` is instantiated per page.
-
-### 1c. Missing `__init__.py` files in subpackages
-
-The following directories have no `__init__.py`:
-- `hermes/ingestion/`
-- `hermes/normalization/`
-- `hermes/extraction/`
-- `hermes/schemas/`
-- `hermes/schemas/examples/`
-
-Python 3 implicit namespace packages work at runtime, but **`hatchling` will not include these in sdist/wheel builds** unless configured to do so. Since you use `hatchling.build`, the installed package will be broken unless `__init__.py` files are added or a `[tool.hatch.build]` include pattern is set.
-
-### 1d. Token estimation inconsistency
-
-`preflight.py` uses `total_chars // 4` (4 chars/token), while `chunker.py` uses `CHARS_PER_TOKEN = 2` (2 chars/token). Preflight reports "~1,000 tokens" but the chunker treats the same text as ~2,000 tokens, creating unnecessarily small chunks and wasting LLM calls. Pick one heuristic (4 chars/token is standard for English; 2-3 for multilingual).
+Original findings: CLI spacing in `hermes test`, per-page OCR model reload, packaging/wheel layout vs subpackages, and token-heuristic mismatch between preflight and chunker. **Status:** addressed — see **`[fixed]` Section 1** (`1a`–`1d`).
 
 ---
 
-## 2. CODE QUALITY
+## 2. CODE QUALITY (historical — remediated)
 
-### 2a. Dead code
-
-| Location | Item | Status |
-|---|---|---|
-| `generate_test_datasets.py:5` | `from datasets import load_dataset` | Never used (PDF was rewritten to use Faker) |
-| `hermes/ingestion/storage.py:30-34` | `read_raw()` function | Never called anywhere |
-| `hermes/schemas/loader.py:62-74` | `discover_schemas()` function | Never called anywhere |
-| `hermes/extraction/validator.py:8` | `re` import used, but `_FENCE_RE` could use `re.compile` at module level | Fine, but `from typing import Any` is only used once |
-
-### 2b. Verbosity / repetition in pipeline.py
-
-The normalization error handling pattern appears 3 times in `run_pipeline` (lines 124-150, 156-183, 185-208) -- each one does:
-1. Build error message
-2. Save pipeline stage
-3. Update job status to FAILED
-4. Print error
-5. Close connection
-6. Return job_id
-
-This should be a `_fail_job(conn, job_id, stage, error_msg, started_at)` helper.
-
-### 2c. Type annotations gaps
-
-- `_save_failure` suppresses type checking: `conn, job_id: str, chunk: Chunk, error: str, retry_count: int  # type: ignore[no-untyped-def]`
-- `_write_sheet_markdown` has untyped `ws` parameter
-- `_ocr_page`, `_render_and_ocr`, `_get_ocr_function` all have `# type: ignore[no-untyped-def]`
-- `_parse_config` takes `dict` without type args
-- Given `[tool.mypy] strict = true`, these suppressed errors should be properly typed
-
-### 2d. Connection management -- no context managers
-
-Connections in `cli.py` and `pipeline.py` are manually opened/closed without `try/finally`. If an exception occurs between `init_db()` and `conn.close()`, the connection leaks. Example:
-
-```226:317:c:\Users\Ale\Documents\Repos\Hermes\hermes\cli.py
-    conn = init_db()
-    # ... 90 lines of logic that could throw ...
-    conn.close()
-```
-
-### 2e. Per-operation commits
-
-Every `save_result`, `save_llm_run`, `save_failed`, `save_pipeline_stage` does its own `conn.commit()`. A 100-chunk job does 300+ individual commits. Batch commits (e.g., per-chunk or per-stage) would reduce I/O.
+Original findings: dead imports/helpers, duplicated failure paths in the pipeline, strict-mypy gaps, manual DB lifecycle, per-call commits on hot paths. **Status:** addressed — see **`[fixed]` Section 2** (`2a`–`2e`).
 
 ---
 
@@ -132,157 +60,52 @@ Every `save_result`, `save_llm_run`, `save_failed`, `save_pipeline_stage` does i
 
 ## 4. SCALABILITY ISSUES
 
-### 4a. SQLite write serialization under concurrency
+### 4a. SQLite write serialization under concurrency *(still relevant)*
 
-When `--workers > 1`, each worker thread opens its own SQLite connection. WAL mode allows concurrent readers, but **writes are still serialized** at the database level. With many workers, threads will contend on the write lock. For local CLI use with 4-8 workers this is acceptable; for anything higher, consider batching writes or switching to connection pooling.
+When `--workers > 1`, each worker thread opens its own SQLite connection. WAL mode allows concurrent readers, but **writes are still serialized** at the database level. With many workers, threads contend on the write lock. For typical local CLI use (roughly 4–8 workers) this is usually acceptable; for higher concurrency or shared DB scenarios, consider batching, pooling, or a different store — see **quick reference** above.
 
-### 4b. No streaming export for large result sets
+### 4b–4e. Other scalability notes *(remediated)*
 
-`export_results_as_records` loads ALL records into memory, parses ALL JSON, then writes. For a job with 10,000+ records, this could be problematic. The export should stream records to the output file.
-
-### 4c. Full-file-in-memory for large Excel token estimation
-
-`preflight.py` iterates ALL rows of ALL sheets to estimate tokens:
-
-```101:113:c:\Users\Ale\Documents\Repos\Hermes\hermes\ingestion\preflight.py
-    elif file_type == FileType.EXCEL:
-        try:
-            import openpyxl
-            wb = openpyxl.load_workbook(str(file_path), read_only=True, data_only=True)
-            page_count = len(wb.sheetnames)
-            total_chars = 0
-            for sheet in wb.sheetnames:
-                ws = wb[sheet]
-                for row in ws.iter_rows(values_only=True):
-                    total_chars += sum(len(str(c)) for c in row if c is not None)
-            estimated_tokens = total_chars // 4
-            wb.close()
-```
-
-For a 100K-row spreadsheet, this scans everything just for an estimate. Consider sampling (first N rows x sheet count).
-
-**Remediation strat:**
-
-    1. **Clarify the goal.** Preflight’s `estimated_tokens` is a **rough hint** (same `// 4` heuristic as elsewhere), not a billing-quality count. Decide whether optimization targets **wall-clock** only, **CPU** only, or both — and what maximum error vs full scan is acceptable (e.g. ±20–30% for huge files only).
-
-    2. **Measure before changing behavior.** On representative workbooks (including large synthetics and `test_excel_accuracy_synthetic.xlsx`-style fixtures), record **full-scan** `total_chars` and tokens as the reference. Then prototype **sampling strategies** offline and compare error distribution — same approach as characterizing PDF preflight (PDF classification already samples the first 5 pages in `detect_file_type`).
-
-    3. **Sampling options to try (can combine):**
-    - **Prefix sample:** First *N* rows per sheet (cheap; biased if headers/summary rows dominate).
-    - **Capped iteration:** Stop after *M* total rows across the workbook, then **extrapolate** using `openpyxl`’s `max_row` / dimensions (if trustworthy for the file) or sheet row counts — `chars_per_row_sample * estimated_total_rows`.
-    - **Hybrid:** Full scan if `max_row` (or file size) is below a threshold; sample only above that threshold.
-    - **Per-sheet budget:** Allocate a fixed row budget across sheets proportional to `max_row` or evenly.
-
-    4. **Implementation notes:** `read_only` + `iter_rows` can take `max_row=` to bound reads. Verify behavior on **empty sheets**, **sparse** tables, and **very wide** rows (a few cells may dominate char count). Keep **closing** the workbook and preserve current failure mode (`ImportError` → zeros).
-
-    5. **Align with chunking.** If chunker/token math changes (`CHARS_PER_TOKEN`, tiktoken), preflight should stay **consistent** in spirit so “~tokens” in the CLI does not diverge wildly from actual chunk counts — re-check after any tokenizer change.
-
-    6. **Tests / guardrails:** A small **committed** fixture with known char totals (full scan) gives a regression anchor. Optional: assert sampled estimate stays within a chosen band vs full scan for that fixture — or document sampling as approximate-only and test determinism + bounds.
-
-    7. **Optional UX:** If estimates become approximate, consider labeling in CLI output (“approx.”) or logging when the fast path was used — only if confusion shows up in practice.
-
-### 4d. No rate limiting for cloud LLM providers
-
-When using LiteLLM with `--workers 4+`, there's no rate limiting. OpenAI/Anthropic APIs will return 429s. The code catches exceptions but doesn't distinguish retriable 429s from fatal errors.
+Export memory use, Excel preflight cost on huge sheets, cloud LLM retry behavior, and table row batching per chunk were discussed in the original audit. **Status:** addressed or superseded — see **`[fixed]` Section 4** (`4b`–`4e`). *Note:* there is still **no separate application-level request throttle**; LiteLLM-side retries/backoff address many 429-style cases (`4d` in **`[fixed]`**).
 
 ---
 
 ## 5. MISSING FEATURES / GAPS
 
-### Infrastructure (P0 for release)
-- **No CI/CD** -- No `.github/workflows/`, no automated testing/linting on push
-- **No `py.typed` marker** -- If anyone imports Hermes as a library, type checkers won't find type info
-- **No `MANIFEST.in` or hatch build config** -- Migrations directory may not be included in the wheel
+Most items from the original **infrastructure / CLI / resilience** lists (CI, `py.typed`, wheel + migrations, verbose logging, `clean`, `list-schemas`, normalization progress, streaming export, OCR timeout, graceful SIGINT, DLQ promotion rules, extraction-stage resume, cross-job dedup, Docker, etc.) are **closed** — see **`[fixed]` Section 5**.
 
-### CLI gaps
-- **No `--verbose` / `--quiet` flags** -- No way to control log verbosity; `logging` is configured nowhere
-- **No `hermes clean` command** -- No way to delete jobs or clean storage
-- **No `hermes list-schemas` command** -- Would help discoverability
-- **No progress for normalization/OCR** -- Progress bar only covers extraction, but OCR can take 10x longer
-
-### Test coverage gaps
-- **No test for OCR pipeline** (`pdf_ocr.py` is completely untested)
-- **No test for LiteLLM client** (only Ollama paths are tested via mocked pipeline)
-- **No test for concurrent extraction** (`workers > 1`)
-- **No test for `hermes test` CLI command**
-- **No test for `hermes export` CLI command**
-- **No test for table chunking** (`_split_table_by_rows` in chunker)
-- **No test for the `hermes init` CLI flow** directly (only `user_schemas` is tested)
-- Test fixtures (`tests/fixtures/`) are gitignored and must be generated -- tests skip silently instead of failing, which can mask real breakage in CI
-
-### Resilience gaps
-- **No timeout on OCR** -- surya-ocr on a complex page could hang indefinitely
-- **No graceful shutdown** -- Ctrl+C during extraction leaves the job in "extracting" status forever; no cleanup hook
-- **No job resumption** -- If a job crashes mid-extraction, there's no way to resume from the last completed chunk
-- **No idempotency** -- Running `extract` on the same file creates duplicate jobs with no dedup
-- **DLQ `retry` doesn't update the parent job status** -- After successful replay, the job stays as "partial" or "failed"
+**Still worth tracking:** **Still open** table + **Caveats** at the top; §4a below; full behavior in **`[fixed]`** / `CHANGELOG.md`.
 
 ---
 
 ## 6. SECURITY NOTES
 
-- `schemas/loader.py` executes `importlib.import_module()` on arbitrary user-provided strings. For a CLI tool this is acceptable (same trust boundary as running Python), but document that schema refs should be trusted.
-- `_parse_config` does `llm_raw.pop("litellm", {})` which mutates the input dict. Harmless due to `lru_cache`, but a code smell.
+Schema modules are loaded via **import** from user-supplied `module:Class` paths — same trust as running that Python code; **`README.md`** documents this. Config parsing no longer mutates loaded tables for LiteLLM. **Details:** **`[fixed]` Section 6**.
 
 ---
 
 ## 7. WHAT'S DONE WELL
 
-- **Clean architecture** -- Pipeline stages are well-separated: ingestion -> normalization -> chunking -> extraction -> validation -> persistence
-- **Memory safety** -- Deliberate page-at-a-time processing, `del page`/`del pixmap`, streaming Excel reads
-- **DLQ pattern** -- Failed extractions are persisted with chunk text URIs for replay; this is production-grade
-- **Prompt versioning** -- SHA-256 of prompt templates lets you track which prompt version produced which results
-- **Dual LLM backend** -- Ollama/LiteLLM factory pattern with unified interface
-- **Repair loop** -- Self-healing extraction with structured error feedback to the LLM
-- **Immutable config** -- `frozen=True` dataclasses prevent mutation bugs
-- **Table-aware chunking** -- Splitting by row count instead of token count for tabular data is smart
-- **Test coverage of core paths** -- DB, config, validator, pipeline integration, pages spec, preflight are all tested
+- **Clean architecture** — Clear pipeline: ingestion → normalization → chunking → extraction → validation → persistence
+- **Memory safety** — Page-at-a-time processing and bounded normalization patterns
+- **DLQ pattern** — Failed extractions persisted for replay; promotion rules tightened (see **`[fixed]`**)
+- **Prompt versioning** — Template hashes for traceability (dedup reuse key omits prompt version — see **Caveats** table / **`[fixed]`**)
+- **Dual LLM backend** — Ollama / LiteLLM behind a single interface
+- **Repair loop** — Structured validation/repair around LLM output
+- **Immutable config** — `frozen=True` dataclasses where used
+- **Table-aware chunking** — Row-batched table splits with tunable caps (see **`[fixed]` 4e**)
 
 ---
 
-## 8. RECOMMENDED NEXT STEPS (Priority Order)
+## 8. RECOMMENDED NEXT STEPS (historical backlog → outcomes)
 
-### P0 -- Must fix before release
-1. Add `__init__.py` to all subpackages (5 files)
-2. Fix OCR model caching (load once, reuse)
-3. Fix the `thinking=` missing-space bug in `cli.py`
-4. Add CI (GitHub Actions: `ruff check`, `mypy`, `pytest` with fixture generation)
-5. Verify the built wheel includes `migrations/` directory
-
-### P1 -- Should fix before release
-6. Unify token estimation heuristic (pick 3 or 4 chars/token consistently)
-7. Add connection context managers (or at minimum try/finally)
-8. Extract repeated normalization-failure handling in pipeline.py
-9. Add `--verbose` / logging configuration
-10. Clean up dead code (`read_raw`, `discover_schemas`, unused `datasets` import)
-11. Add `py.typed` marker
-
-### P2 -- Next iteration
-12. Cache OCR reader instances across pages
-13. Add `hermes clean` command
-14. Add graceful shutdown (signal handler to mark interrupted jobs)
-15. Add rate limiting for cloud providers
-16. Resume support for interrupted jobs
-17. Stream `export` instead of loading all records
-18. Test coverage for OCR, LiteLLM, concurrency, CLI commands
-
-### P3 -- Nice to have
-19. Proper type annotations (remove all `# type: ignore`)
-20. Batch DB commits per chunk instead of per operation
-21. Job deduplication (content hash)
-22. `hermes list-schemas` command
-23. Progress bars for normalization/OCR phases
-24. Dockerfile for containerized deployment
-
----
-
-Overall, the system is well-built for a v0.1. The architecture is sound and the pipeline design is solid. The biggest risks for release are the missing `__init__.py` files (packaging will be broken), the OCR per-page model loading (will make scanned PDFs unusable), and the lack of CI (regressions will slip through). Fix those three and you have a viable release.
+The original **P0–P3** checklist from the audit is **mapped item-by-item** in **`[fixed]` Section 8** (what shipped vs what is partial or N/A). For **current** priorities, use **Still open or to review** (work left), **Caveats on remediated behavior** (limits of shipped fixes), and **`[fixed]`** for full detail.
 
 ---
 
 ## [fixed] — Remediated items (changelog cross-reference)
 
-The following maps **audit IDs** to **what changed**. Line numbers in code blocks above are **historical**; current paths/layout may differ (e.g. migrations under `hermes/migrations/`).
+The following maps **audit IDs** to **what changed**. The narrative sections above are **condensed**; paths and line-level detail live in the repo and `CHANGELOG.md` (e.g. migrations under `hermes/migrations/`).
 
 ### Section 1 — Bugs
 
@@ -315,24 +138,26 @@ The following maps **audit IDs** to **what changed**. Line numbers in code block
 |----|-------------|
 | **4a** | Unchanged by design (documented tradeoff). |
 | **4b** | `export_results_as_records` is a generator; `hermes export` streams JSONL/CSV (`hermes/db.py`, `hermes/cli.py`). |
-| **4c** | **Not fixed** — full-sheet scan for Excel token estimate remains. |
+| **4c** | Hybrid **sampling** for large workbooks when summed per-sheet row counts exceed **`EXCEL_PREFLIGHT_FULL_SCAN_MAX_ROWS`** (10_000): prefix of up to **`EXCEL_PREFLIGHT_PREFIX_ROWS_PER_SHEET`** (500) rows per sheet with **extrapolation** from dimensions; smaller workbooks keep a **full row scan**. **`estimated_tokens`** uses **`CHARS_PER_TOKEN`** from **`hermes/normalization/chunker.py`** (same divisor as PDF preflight). See `CHANGELOG.md` 2026_04_11 / `tests/test_preflight.py`. |
 | **4d** | LiteLLM path uses retries / backoff strategy (see `CHANGELOG.md` for `litellm.completion` parameters; evolved from early `retry_after` notes). |
+| **4e** | **Table-aware chunking:** `MAX_TABLE_ROWS_PER_CHUNK` raised **10 → 80** in `hermes/normalization/chunker.py` — fewer LLM calls per wide sheet when using stronger models; re-tune if validation errors or timeouts increase on very wide rows (`CHANGELOG.md` 2026_04_11). |
 
 ### Section 5 — Gaps
 
 | ID | Remediation |
 |----|-------------|
-| **Infra** | `.github/workflows/ci.yml`, `hermes/py.typed`, hatch wheel + `hermes/migrations/`. |
-| **CLI** | Global `--verbose` / `-v`; `hermes clean` with `--all`, `--force`, `typer.confirm`; normalization **Progress** + `on_page_done` in normalizers. **`list-schemas` not implemented.** |
+| **Infra** | `.github/workflows/ci.yml`, `hermes/py.typed`, hatch wheel + `hermes/migrations/`. **Container:** `Dockerfile` (Python 3.12-slim, non-root `hermes` user, `ENTRYPOINT hermes`, optional build-arg **`PIP_EXTRAS`** for extras), `.dockerignore`. |
+| **Test fixtures** | CI runs **`python tests/generate_fixtures.py`** before **`pytest`**. **`tests/fixtures/`** is **gitignored**; **`Makefile`** targets **`test`** (fixtures + pytest) and **`ci`** (ruff, mypy, fixtures, pytest) match CI for local runs (`README.md`). |
+| **CLI** | Global `--verbose` / `-v`; `hermes clean` with `--all`, `--force`, `typer.confirm`; normalization **Progress** + `on_page_done` in normalizers. **`hermes list-schemas`** (`hermes/schemas/discover.py`): sorted `module:Class` for packaged + user schemas; **`--no-packaged`** / **`--no-user`**; failed user modules skipped with stderr warning. |
 | **§5 tests** | Table chunking, mocked `pdf_ocr` + OCR timeout, LiteLLM client unit tests, Typer smoke tests for `export` / `init` / `version`, pipeline parallel `ThreadPoolExecutor` smoke (`tests/`). |
-| **Resilience** | SIGINT during extraction: `threading.Event`, partial/failed final status, stage detail `interrupted`; threaded pool shutdown with cancel. **Per-page OCR timeout** via `normalization.ocr_timeout_seconds` + `Future.result(timeout=...)` (does not reliably kill native OCR). **Resume-after-crash, dedup — not implemented.** |
+| **Resilience** | SIGINT during extraction: `threading.Event`, partial/failed final status, stage detail `interrupted`; threaded pool shutdown with cancel. **Per-page OCR timeout** via `normalization.ocr_timeout_seconds` + `Future.result(timeout=...)` (does not reliably kill native OCR). **Extraction-stage resume:** `hermes extract --resume` (`hermes/extraction/pipeline.py`). **Cross-job content-hash dedup** for **`completed`** jobs (`content_sha256` + schema + `pages_spec` + effective model; `hermes extract --force` / `hermes test --force` bypasses). **Resume-after-crash for full pipeline** (not only post-chunking) — not implemented. |
 | **DLQ** | After `retry`, jobs can promote to `completed` when DLQ empty for job, status was partial/failed, and distinct extraction chunk count matches `total_chunks` (see `CHANGELOG.md` / `count_distinct_extraction_chunk_indices`). |
 
 ### Section 6 — Security
 
 | ID | Remediation |
 |----|-------------|
-| **§6** | `_parse_config` uses `.get("litellm", {})` and excludes `litellm` from `llm_fields` — **no mutation** of loaded dict. **Explicit user-facing doc** on trusted schema refs — **review** `README.md` if needed. |
+| **§6** | `_parse_config` uses `.get("litellm", {})` and excludes `litellm` from `llm_fields` — **no mutation** of loaded dict. **`README.md`** (Quick Start, Custom Schemas): **trust** for `--schema` / `default_schema` — paths are **imported** (same boundary as running that import); Hermes does **not** sandbox schema code; untrusted paths should not be used. |
 
 ### Section 8 — Recommended next steps (mapping)
 
@@ -342,12 +167,13 @@ The following maps **audit IDs** to **what changed**. Line numbers in code block
 | **P1 6–11** | Addressed. |
 | **P2 12** | Redundant after 1b (cached readers). |
 | **P2 13–15, 17, 23** | `clean`, graceful shutdown, LiteLLM retries, streaming export, normalization progress. |
-| **P2 16** | **Not implemented** (resume). |
+| **P2 16** | **Extraction-stage resume** — `hermes extract --resume` (MVP; not mid-normalization). |
 | **P2 18** | **Partial** (CI tests; gaps may remain). |
 | **P3 19** | **Largely addressed** (residual ignores only where stubs require). |
 | **P3 20** | Batch commits per chunk — **done**. |
-| **P3 21–22** | Dedup, `list-schemas` — **not done**. |
-| **P3 24** | Dockerfile — **not done**. |
+| **P3 21** | Content-hash job dedup + `--force` on `extract` / `test` — **done** (prompt version not in dedup key; see `CHANGELOG.md`). |
+| **P3 22** | **`hermes list-schemas`** — **done** (`hermes/schemas/discover.py`; tests in `tests/test_discover.py`, CLI in `tests/test_cli.py`). |
+| **P3 24** | **Dockerfile** — **done** (see **Infra** row above; `CHANGELOG.md` 2026_04_11). |
 
 ---
 

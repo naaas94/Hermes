@@ -10,6 +10,7 @@ from hermes.db import (
     get_job,
     get_results_for_job,
     get_stages_for_job,
+    get_successful_chunk_indices,
     list_jobs,
     save_failed,
     save_llm_run,
@@ -46,6 +47,8 @@ def test_schema_version_applied(tmp_db: sqlite3.Connection):
     assert row is not None
     row = tmp_db.execute("SELECT version FROM schema_version WHERE version = 2").fetchone()
     assert row is not None
+    row = tmp_db.execute("SELECT version FROM schema_version WHERE version = 3").fetchone()
+    assert row is not None
 
 
 def test_create_and_get_job(tmp_db: sqlite3.Connection):
@@ -64,6 +67,34 @@ def test_create_and_get_job(tmp_db: sqlite3.Connection):
     assert fetched.file_name == "test.xlsx"
     assert fetched.file_type == FileType.EXCEL
     assert fetched.status == JobStatus.QUEUED
+    assert fetched.pages_spec == ""
+
+
+def test_get_successful_chunk_indices(tmp_db: sqlite3.Connection):
+    job = Job(
+        id="chunks1",
+        file_name="a.xlsx",
+        file_type=FileType.EXCEL,
+        schema_class="x:Y",
+    )
+    create_job(tmp_db, job)
+    save_result(
+        tmp_db,
+        ExtractionResult(
+            job_id="chunks1",
+            chunk_index=0,
+            record_json="[]",
+        ),
+    )
+    save_result(
+        tmp_db,
+        ExtractionResult(
+            job_id="chunks1",
+            chunk_index=2,
+            record_json="[]",
+        ),
+    )
+    assert get_successful_chunk_indices(tmp_db, "chunks1") == {0, 2}
 
 
 def test_update_job_status(tmp_db: sqlite3.Connection):

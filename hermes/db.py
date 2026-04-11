@@ -83,11 +83,16 @@ def open_connection(db_path: Path | None = None) -> Generator[sqlite3.Connection
 def create_job(conn: sqlite3.Connection, job: Job) -> Job:
     conn.execute(
         "INSERT INTO jobs (id, file_name, file_type, page_count, has_text_layer, "
-        "schema_class, normalization_error, status, total_chunks, completed_chunks, "
-        "failed_chunks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "schema_class, normalization_error, pages_spec, content_sha256, llm_model_key, "
+        "status, total_chunks, completed_chunks, failed_chunks) VALUES (?, ?, ?, ?, ?, "
+        "?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             job.id, job.file_name, job.file_type.value, job.page_count,
-            int(job.has_text_layer), job.schema_class, job.normalization_error, job.status.value,
+            int(job.has_text_layer), job.schema_class, job.normalization_error,
+            job.pages_spec or "",
+            job.content_sha256 or "",
+            job.llm_model_key or "",
+            job.status.value,
             job.total_chunks, job.completed_chunks, job.failed_chunks,
         ),
     )
@@ -116,6 +121,31 @@ def update_job_status(
     vals.append(job_id)
     conn.execute(f"UPDATE jobs SET {', '.join(sets)} WHERE id = ?", vals)
     conn.commit()
+
+
+def find_completed_dedup_job(
+    conn: sqlite3.Connection,
+    content_sha256: str,
+    schema_class: str,
+    pages_spec: str,
+    llm_model_key: str,
+) -> str | None:
+    """Return the most recent completed job id matching the dedup key, or None."""
+    if not content_sha256:
+        return None
+    row = conn.execute(
+        "SELECT id FROM jobs WHERE content_sha256 = ? AND schema_class = ? "
+        "AND IFNULL(pages_spec, '') = ? AND IFNULL(llm_model_key, '') = ? "
+        "AND status = ? ORDER BY completed_at DESC, created_at DESC LIMIT 1",
+        (
+            content_sha256,
+            schema_class,
+            pages_spec,
+            llm_model_key,
+            JobStatus.COMPLETED.value,
+        ),
+    ).fetchone()
+    return str(row["id"]) if row else None
 
 
 def get_job(conn: sqlite3.Connection, job_id: str) -> Job | None:
@@ -147,6 +177,15 @@ def _row_to_job(row: sqlite3.Row) -> Job:
     normalization_error = ""
     if "normalization_error" in row.keys():
         normalization_error = row["normalization_error"] or ""
+    pages_spec = ""
+    if "pages_spec" in row.keys() and row["pages_spec"] is not None:
+        pages_spec = str(row["pages_spec"])
+    content_sha256 = ""
+    if "content_sha256" in row.keys() and row["content_sha256"] is not None:
+        content_sha256 = str(row["content_sha256"])
+    llm_model_key = ""
+    if "llm_model_key" in row.keys() and row["llm_model_key"] is not None:
+        llm_model_key = str(row["llm_model_key"])
 
     return Job(
         id=row["id"],
@@ -156,6 +195,9 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         has_text_layer=bool(row["has_text_layer"]),
         schema_class=row["schema_class"],
         normalization_error=normalization_error,
+        pages_spec=pages_spec,
+        content_sha256=content_sha256,
+        llm_model_key=llm_model_key,
         status=JobStatus(row["status"]),
         total_chunks=row["total_chunks"] or 0,
         completed_chunks=row["completed_chunks"] or 0,
@@ -207,6 +249,17 @@ def count_distinct_extraction_chunk_indices(
         (job_id,),
     ).fetchone()
     return int(row[0]) if row and row[0] is not None else 0
+
+
+def get_successful_chunk_indices(
+    conn: sqlite3.Connection, job_id: str
+) -> set[int]:
+    """Chunk indices that have at least one extraction_results row (successful save)."""
+    rows = conn.execute(
+        "SELECT DISTINCT chunk_index FROM extraction_results WHERE job_id = ?",
+        (job_id,),
+    ).fetchall()
+    return {int(r[0]) for r in rows}
 
 
 # ── LLM Runs ─────────────────────────────────────────────────────────

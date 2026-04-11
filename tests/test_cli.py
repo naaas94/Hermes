@@ -26,6 +26,15 @@ def test_cli_version(cli_runner: CliRunner):
     assert f"Hermes v{__version__}" in result.stdout
 
 
+def test_cli_list_schemas_packaged_only(cli_runner: CliRunner):
+    from hermes.cli import app
+
+    result = cli_runner.invoke(app, ["list-schemas", "--no-user"])
+    assert result.exit_code == 0
+    assert "hermes.schemas.examples.generic_table:GenericRow" in result.stdout
+    assert "hermes.schemas.examples.vehicle_fleet:VehicleRecord" in result.stdout
+
+
 def test_cli_init_creates_config_and_db(
     cli_runner: CliRunner,
     tmp_path: Path,
@@ -101,3 +110,27 @@ def test_cli_export_unknown_format_exits_nonzero(cli_runner: CliRunner):
     )
     assert result.exit_code == 1
     assert "Unknown format" in result.stdout
+
+
+def test_cli_extract_resume_missing_job_exits_nonzero(
+    cli_runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = tmp_path / "h.db"
+    monkeypatch.setattr("hermes.config.get_db_path", lambda: db_path)
+    monkeypatch.setattr("hermes.db.get_db_path", lambda: db_path)
+
+    from hermes.cli import app
+
+    result = cli_runner.invoke(app, ["extract", "--resume", "nosuchjobid"])
+    assert result.exit_code == 1
+    assert "No job found" in result.stdout
+
+
+def test_cli_extract_requires_path_without_resume(cli_runner: CliRunner):
+    from hermes.cli import app
+
+    result = cli_runner.invoke(app, ["extract"])
+    assert result.exit_code == 1
+    assert "Missing path" in result.stdout

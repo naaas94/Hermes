@@ -12,3 +12,7 @@ build/
 *.pyo
 .env
 .venv/
+.cursor/
+
+# Synthetic files from tests/generate_fixtures.py (CI generates before pytest)
+tests/fixtures/

@@ -1,0 +1,13 @@
+.git
+.gitignore
+.cursor
+.dev
+.pytest_cache
+.ruff_cache
+.mypy_cache
+tests
+storage
+**/__pycache__
+**/*.py[cod]
+**/*.pyd
+.vscode

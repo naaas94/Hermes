@@ -217,6 +217,100 @@ def test_pipeline_parallel_workers_processes_multiple_chunks(
     conn.close()
 
 
+def test_resume_pipeline_finishes_remaining_chunks(
+    sample_excel: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_llm_response: LLMResponse,
+):
+    """Delete one chunk result and resume; only the missing chunk should call the LLM."""
+    if not sample_excel.exists():
+        pytest.skip("Run generate_fixtures.py first")
+
+    db_path = tmp_path / "test.db"
+    storage_path = tmp_path / "storage"
+    storage_path.mkdir()
+
+    monkeypatch.setattr("hermes.config.get_storage_base", lambda: storage_path)
+    monkeypatch.setattr("hermes.config.get_db_path", lambda: db_path)
+    monkeypatch.setattr("hermes.db.get_db_path", lambda: db_path)
+    monkeypatch.setattr("hermes.ingestion.storage.get_storage_base", lambda: storage_path)
+
+    def fake_chunk_pages(
+        pages: object,
+        context_window: int | None = None,
+        overlap_ratio: float | None = None,
+    ) -> list[Chunk]:
+        return [
+            Chunk(
+                chunk_index=0,
+                text="chunk zero text",
+                source_pages=[0],
+                estimated_tokens=50,
+            ),
+            Chunk(
+                chunk_index=1,
+                text="chunk one text",
+                source_pages=[0],
+                estimated_tokens=50,
+            ),
+        ]
+
+    mock_client = MagicMock()
+    mock_client.chat.return_value = mock_llm_response
+    mock_client.check_ready.return_value = True
+
+    with (
+        patch("hermes.extraction.pipeline.chunk_pages", fake_chunk_pages),
+        patch("hermes.extraction.pipeline.create_llm_client", return_value=mock_client),
+    ):
+        from hermes.extraction.pipeline import run_pipeline
+
+        job_id = run_pipeline(
+            sample_excel,
+            schema_ref="hermes.schemas.examples.vehicle_fleet:VehicleRecord",
+        )
+
+    assert mock_client.chat.call_count == 2
+
+    from hermes.db import get_job, get_results_for_job, update_job_status
+    from hermes.models import JobStatus
+
+    conn = get_connection(db_path)
+    conn.execute(
+        "DELETE FROM extraction_results WHERE job_id = ? AND chunk_index = 1",
+        (job_id,),
+    )
+    conn.commit()
+    update_job_status(
+        conn,
+        job_id,
+        JobStatus.PARTIAL,
+        completed_chunks=1,
+        failed_chunks=0,
+    )
+    conn.close()
+
+    mock_client.reset_mock()
+    with (
+        patch("hermes.extraction.pipeline.chunk_pages", fake_chunk_pages),
+        patch("hermes.extraction.pipeline.create_llm_client", return_value=mock_client),
+    ):
+        from hermes.extraction.pipeline import resume_pipeline
+
+        resume_pipeline(job_id)
+
+    assert mock_client.chat.call_count == 1
+
+    conn = get_connection(db_path)
+    job = get_job(conn, job_id)
+    assert job is not None
+    assert job.status == JobStatus.COMPLETED
+    results = get_results_for_job(conn, job_id)
+    assert len(results) == 2
+    conn.close()
+
+
 def test_unknown_file_graceful_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
