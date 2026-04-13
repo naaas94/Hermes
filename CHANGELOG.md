@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026_04_13
+
+- **CLI** (`hermes status`): job detail view includes a **Contract** row with the full **`contract_id`** (or `-` when unset). The **All Jobs** table adds a **Contract** column with a truncated id (28 characters max) so terminal tables stay readable.
+- **Documentation** (`README.md`, `config.toml.example`): README documents Docker, job deduplication / **`--force`**, **`list-schemas`** flags, supported file extensions, **`hermes status`** contract column behavior, **`hermes test`** reuse vs **`--force`**, OCR timeout and large-Excel preflight notes, **`tiktoken_encoding`**, and **`-f`** semantics across commands. **`config.toml.example`** adds **`tiktoken_encoding`** under **`[extraction]`**.
+
 ## 2026_04_11
 
 - **Extraction contracts** (`hermes/migrations/005_extraction_contracts.sql`, `hermes/extraction/contract_identity.py`, `hermes/db.py`, `hermes/models.py`, `hermes/extraction/pipeline.py`, `hermes/cli.py`): SQLite table **`extraction_contracts`** stores a **canonical JSON Schema** string (sorted keys, compact separators), **`json_schema_sha256`**, **`prompt_version`**, and **`schema_class`** (`module:Class` ref). **`contract_id`** is content-addressed (`ctr_` + 32 hex chars from a composite SHA-256 over canonical UTF-8 bytes, NUL, prompt version, NUL, schema ref). **`jobs`**, **`llm_runs`**, and **`extraction_results`** gain nullable **`contract_id`** FKs; existing rows stay NULL. Before the extraction phase (and on **`retry`** / resume when the job had no contract), Hermes **resolves or inserts** a contract, **updates the job**, and writes the same id on every run and result. Optional dedup reuses a row when hash + prompt + `schema_class` match. **Tests:** `tests/test_contract_identity.py`, `tests/test_db.py`, `tests/test_pipeline_integration.py`.
