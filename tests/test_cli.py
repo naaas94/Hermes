@@ -134,3 +134,60 @@ def test_cli_extract_requires_path_without_resume(cli_runner: CliRunner):
     result = cli_runner.invoke(app, ["extract"])
     assert result.exit_code == 1
     assert "Missing path" in result.stdout
+
+
+def test_format_contract_list_cell_truncation():
+    from hermes.cli import _format_contract_list_cell
+
+    assert _format_contract_list_cell(None) == "-"
+    assert _format_contract_list_cell("ctr_short") == "ctr_short"
+    long_id = "ctr_" + "a" * 32
+    out = _format_contract_list_cell(long_id)
+    assert len(out) == 28
+    assert out.endswith("…")
+    assert out == long_id[:27] + "…"
+
+
+def test_cli_status_shows_contract_id(
+    cli_runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_path = tmp_path / "status_contract.db"
+    monkeypatch.setattr("hermes.config.get_db_path", lambda: db_path)
+    monkeypatch.setattr("hermes.db.get_db_path", lambda: db_path)
+
+    from hermes.cli import app
+    from hermes.db import create_job, init_db, insert_extraction_contract
+    from hermes.extraction.contract_identity import canonical_json_schema, compute_contract_id
+    from hermes.models import FileType, Job, JobStatus
+
+    schema_dict = {"type": "object", "properties": {"x": {"type": "string"}}}
+    pv = "prompt_v_cli_status"
+    sref = "cli.test:Row"
+    canonical, sha = canonical_json_schema(schema_dict)
+    cid = compute_contract_id(canonical.encode("utf-8"), pv, sref)
+
+    conn = init_db(db_path)
+    insert_extraction_contract(conn, cid, pv, sref, canonical, sha)
+    job = Job(
+        id="status_contract_job",
+        file_name="doc.pdf",
+        file_type=FileType.PDF_TEXT,
+        schema_class=sref,
+        status=JobStatus.COMPLETED,
+        contract_id=cid,
+    )
+    create_job(conn, job)
+    conn.close()
+
+    list_result = cli_runner.invoke(app, ["status"])
+    assert list_result.exit_code == 0
+    assert "All Jobs" in list_result.stdout
+    assert "doc.pdf" in list_result.stdout
+    # CliRunner uses a narrow capture width; Rich may ellipsis the contract cell to a short prefix.
+    assert cid[:6] in list_result.stdout
+
+    detail_result = cli_runner.invoke(app, ["status", "status_contract_job"])
+    assert detail_result.exit_code == 0
+    assert cid in detail_result.stdout

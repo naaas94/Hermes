@@ -320,6 +320,10 @@ def status(
             table.add_row("Type", job.file_type.value)
             table.add_row("Pages", str(job.page_count))
             table.add_row("Schema", job.schema_class)
+            table.add_row(
+                "Contract",
+                job.contract_id if job.contract_id else "[dim]-[/dim]",
+            )
             if job.normalization_error:
                 table.add_row("Normalization Error", job.normalization_error)
             table.add_row("Status", _status_color(job.status.value))
@@ -379,6 +383,7 @@ def status(
             table.add_column("ID", style="bold")
             table.add_column("File")
             table.add_column("Type")
+            table.add_column("Contract")
             table.add_column("Status")
             table.add_column("Chunks")
             table.add_column("Errors")
@@ -387,6 +392,7 @@ def status(
             for job in jobs:
                 table.add_row(
                     job.id, job.file_name, job.file_type.value,
+                    _format_contract_list_cell(job.contract_id),
                     _status_color(job.status.value),
                     f"{job.completed_chunks}/{job.total_chunks}",
                     str(job.failed_chunks),
@@ -766,6 +772,17 @@ def clean(
         )
     for err in errors:
         console.print(f"[yellow]Warning:[/yellow] {err}")
+
+
+_CONTRACT_LIST_MAX_LEN = 28
+
+
+def _format_contract_list_cell(contract_id: str | None) -> str:
+    if not contract_id:
+        return "-"
+    if len(contract_id) <= _CONTRACT_LIST_MAX_LEN:
+        return contract_id
+    return contract_id[: _CONTRACT_LIST_MAX_LEN - 1] + "…"
 
 
 def _status_color(status: str) -> str:

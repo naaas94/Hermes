@@ -29,3 +29,4 @@ base_path = "./storage"
 [extraction]
 default_schema = "hermes.schemas.examples.generic_table:GenericRow"
 chunk_overlap_ratio = 0.1       # 10% overlap between chunks
+tiktoken_encoding = "cl100k_base"  # used when optional [tiktoken] extra is installed

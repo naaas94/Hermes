@@ -15,6 +15,7 @@ Hermes converts messy Excel spreadsheets, text-layer PDFs, and scanned documents
 - **Self-healing** — failed extractions enter a dead-letter queue and can be replayed; `retry` promotes jobs to completed only when every chunk has a result and the DLQ is clear.
 - **Concurrency-aware** — sequential for local models, parallel with bounded workers for cloud APIs.
 - **Extraction contracts** — jobs, LLM runs, and extraction results reference a stored **JSON Schema snapshot** and **prompt version** via a content-addressed **`contract_id`** (canonical schema string, deduplicated when identical). Makes it explicit which schema + prompt combination produced each row.
+- **Job deduplication** — a **completed** job with the same file hash, schema, page spec, and effective model can be reused instead of re-running the pipeline; **`--force`** always starts a new job (see **Job deduplication** under Quick Start).
 
 ## Installation
 
@@ -32,11 +33,29 @@ For OCR support (scanned PDFs):
 pip install -e ".[ocr]"
 ```
 
+Optional: **`normalization.ocr_timeout_seconds`** in `config.toml` caps how long the CLI waits per OCR page (see **Configuration**). **`0`** leaves waits unlimited.
+
 For development:
 
 ```bash
 pip install -e ".[dev]"
 ```
+
+## Docker
+
+The repo includes a **Dockerfile** for a reproducible CLI image: **Python 3.12** (`python:3.12-slim-bookworm`), install from package sources, non-root user **`hermes`** (uid 1000), **`ENTRYPOINT`** **`hermes`** with default **`--help`**. Optional build-arg **`PIP_EXTRAS`** maps to `pip install ".${PIP_EXTRAS}"` (e.g. `[tiktoken]` or `[ocr]`).
+
+```bash
+docker build -t hermes .
+
+docker build --build-arg PIP_EXTRAS='[tiktoken]' -t hermes-tiktoken .
+docker build --build-arg PIP_EXTRAS='[ocr]' -t hermes-ocr .
+
+docker run --rm -v "$PWD:/work" -w /work hermes --help
+docker run --rm -v "$PWD:/work" -w /work hermes extract ./document.pdf
+```
+
+Mount data and configure API keys the same way you would for a local install. Override the default `CMD` by passing subcommands and flags after the image name.
 
 ## Quick Start
 
@@ -58,6 +77,8 @@ ollama pull qwen3:8b
 
 ### 3. Extract
 
+**Supported file types:** `.pdf` and Excel **`.xlsx`**, **`.xlsm`**, **`.xltx`**, **`.xltm`**. Pass a single file or a directory; only files with these extensions are processed.
+
 ```bash
 # After hermes init: user-local copies (editable under ~/.hermes/hermes_user/examples/)
 hermes extract invoice.pdf --schema hermes_user.examples.vehicle_fleet:VehicleRecord
@@ -74,6 +95,10 @@ hermes extract ./documents/ --schema my_schemas.custom:MyModel
 # With concurrent workers (recommended for cloud LLMs only)
 hermes extract data.xlsx --workers 4
 
+# Always create a new job (disable completed-job reuse — see "Job deduplication" below)
+hermes extract data.xlsx --force
+hermes extract invoice.pdf --schema hermes_user.examples.vehicle_fleet:VehicleRecord -f
+
 # Optional: limit PDF pages or Excel sheets (1-based indices; for Excel, sheet index only—not rows)
 hermes extract large.pdf --pages 1-10 --schema hermes_user.examples.vehicle_fleet:VehicleRecord
 hermes extract workbook.xlsx --pages 1,3,5
@@ -83,7 +108,21 @@ hermes -v extract invoice.pdf --schema hermes_user.examples.vehicle_fleet:Vehicl
 
 # List module:Class references you can pass to --schema (bundled examples + ~/.hermes/hermes_user)
 hermes list-schemas
+
+# Only user schemas under ~/.hermes/hermes_user, or only packaged hermes.schemas.examples
+hermes list-schemas --no-packaged
+hermes list-schemas --no-user
 ```
+
+#### Job deduplication
+
+Before preflight, Hermes checks for an existing **`completed`** job with the same **SHA-256 of the source file**, **`schema_class`**, **`pages_spec`** (including “whole document” when `--pages` is omitted), and **effective LLM model** (override, else LiteLLM or Ollama model from config). If one exists, **`run_pipeline`** returns that job id and skips work (Rich explains the reuse).
+
+Use **`hermes extract --force`** or **`-f`** to always create a new job.
+
+**Caveat:** **Prompt version is not part of the dedup key.** Changing prompts alone can still match a prior completed job until you pass **`--force`**, or until the file bytes, schema, pages, or model differ.
+
+**`-f` on different commands:** On **`extract`** and **`test`**, **`-f`** means **`--force`** (new job). On **`clean`**, **`-f`** skips the delete confirmation. On **`export`**, **`-f`** is **`--format`**, not “force”.
 
 Schema refs import Python modules—use only modules you trust (see **Custom Schemas**).
 
@@ -93,6 +132,8 @@ Schema refs import Python modules—use only modules you trust (see **Custom Sch
 hermes status              # List all jobs
 hermes status abc123       # Detailed view for a specific job
 ```
+
+**Contract column:** The **All Jobs** table includes **Contract** with each job’s **`contract_id`**, truncated to **28 characters** (with an ellipsis when longer), or **`-`** when no contract is set. **`hermes status <job_id>`** shows a **Contract** row with the **full** id (or **`-`**). This matches the **`contract_id`** stored on the job and on related LLM runs and extraction results.
 
 ### 5. Export Results
 
@@ -157,6 +198,13 @@ This creates two files in the project root:
 hermes test
 ```
 
+**Job deduplication applies here too:** without **`--force`**, a **prior completed job** for the same synthetic file content, schema, pages, and model may be **reused** (same behavior as `hermes extract`). To always run a full extraction for each fixture, use:
+
+```bash
+hermes test --force
+hermes test -f
+```
+
 The test command automatically detects your configured LLM provider and picks the right concurrency strategy:
 
 - **Ollama (local):** Runs sequentially (`workers=1`). Local models cannot process parallel requests efficiently; concurrent calls would queue up and risk OOM.
@@ -175,7 +223,7 @@ Hermes looks for configuration in this order:
 1. `./config.toml` (repo root)
 2. `~/.hermes/config.toml` (user home)
 
-See `config.toml.example` for all available settings.
+Start from **`config.toml.example`** in the repo for the main TOML sections (`[llm]`, `[llm.litellm]`, `[normalization]`, `[storage]`, `[extraction]`). Some keys are documented only in comments there or below; defaults also live in **`hermes/config.py`** if you need the full dataclass picture.
 
 ### Switching Between Local and Cloud LLMs
 
@@ -207,6 +255,18 @@ hermes extract large_document.pdf --schema my_schema:MyModel --workers 4
 ```
 
 The pipeline uses a bounded `ThreadPoolExecutor` so the number of in-flight LLM requests never exceeds the worker count. Each worker gets its own SQLite connection (WAL mode handles concurrent writes safely).
+
+### Optional: `tiktoken` encoding
+
+When the **`[tiktoken]`** extra is installed, set **`[extraction] tiktoken_encoding`** (default **`cl100k_base`**) to match your tokenizer expectations. See **`config.toml.example`** under **`[extraction]`**.
+
+### Optional: OCR page timeout (scanned PDFs)
+
+With **`pip install ".[ocr]"`**, you can set **`normalization.ocr_timeout_seconds`** in config. **`0`** means no limit (default). A positive value bounds how long the CLI **waits** per page via a worker thread; on timeout the page gets placeholder text and processing continues. This does **not** reliably cancel work inside third-party OCR libraries—native OCR may keep using CPU/GPU until the call returns or the process exits.
+
+### Large Excel preflight estimate
+
+For very large workbooks, the CLI’s **estimated token** hint for Excel uses **row sampling** when per-sheet dimensions exceed internal thresholds, instead of scanning every row—small workbooks still use a full scan. Constants live in **`hermes/ingestion/preflight.py`** if you need exact behavior.
 
 ## Custom Schemas
 
@@ -265,7 +325,7 @@ Every LLM call records:
 - Raw LLM output for debugging
 - Pipeline stage durations (preflight, normalization, chunking, extraction)
 
-Query with: `hermes status <job_id>`
+Inspect jobs with **`hermes status`** (list or detail). The detail view includes pipeline stages, LLM runs, and the job’s **`contract_id`** when present (see §4).
 
 ## Development
 
