@@ -1,21 +1,19 @@
 # Hermes
 
-**Local-first, memory-safe, LLM-powered document extraction engine.**
+**Schema-bound LLM document extraction with auditable contracts and replayable runs.**
 
-Hermes converts messy Excel spreadsheets, text-layer PDFs, and scanned documents into validated, structured JSON using local or cloud LLMs. You define a Pydantic schema, Hermes does the rest.
+Hermes converts messy Excel spreadsheets, text-layer PDFs, and scanned documents into validated, structured JSON against a Pydantic schema you define. Every run is bound to a stored schema snapshot and prompt version, instrumented per LLM call, and routes unrecoverable chunks to a replayable dead-letter queue — against local (Ollama) or cloud (LiteLLM) models.
 
 ## Features
 
-- **Local-first** — runs entirely offline with Ollama. No data leaves your machine.
-- **Cloud-ready** — switch to OpenAI, Anthropic, or Google with a single config change via LiteLLM.
-- **Memory-safe** — streams documents page-by-page; never holds an entire file in RAM.
-- **Schema-driven** — define your own Pydantic models; Hermes extracts to match.
-- **Subset extraction** — optional `--pages` limits which PDF pages or Excel sheets are normalized and extracted (large files).
-- **Observable** — Rich progress for normalization and extraction; every LLM call is logged with tokens, latency, prompt version, and validation status.
-- **Self-healing** — failed extractions enter a dead-letter queue and can be replayed; `retry` promotes jobs to completed only when every chunk has a result and the DLQ is clear.
-- **Concurrency-aware** — sequential for local models, parallel with bounded workers for cloud APIs.
-- **Extraction contracts** — jobs, LLM runs, and extraction results reference a stored **JSON Schema snapshot** and **prompt version** via a content-addressed **`contract_id`** (canonical schema string, deduplicated when identical). Makes it explicit which schema + prompt combination produced each row.
-- **Job deduplication** — a **completed** job with the same file hash, schema, page spec, and effective model can be reused instead of re-running the pipeline; **`--force`** always starts a new job (see **Job deduplication** under Quick Start).
+- **Schema-driven** — define your own Pydantic models; Hermes validates every chunk against them and repairs failures in-loop.
+- **Auditable extraction contracts** — every LLM run and result is tagged with a content-addressed `contract_id` (canonical schema text + prompt version). You can always answer "which schema and prompt produced this row?"
+- **Replayable** — failed chunks enter a dead-letter queue; `hermes retry` resumes them, optionally against a different model. Jobs are promoted to `completed` only when every chunk has a result and the DLQ is clear. `hermes extract --resume` continues after crash or interrupt without re-normalizing.
+- **Deduplicated** — a completed job with the same file hash, schema, page spec, and model is reused instead of re-run. `--force` always starts fresh.
+- **Observable** — per-call tokens, latency, prompt version, validation status; stage timings for preflight, normalization, chunking, extraction. Inspect with `hermes status`.
+- **Streaming by design** — Excel read 50 rows at a time with `openpyxl` read-only; PDF pages processed and released one at a time; results persisted per chunk; exports stream row-by-row.
+- **Runtime-flexible** — runs fully offline with Ollama (no data leaves the machine) or against any LiteLLM-supported provider (OpenAI, Anthropic, Google) with a single config change. Sequential for local models, bounded parallel workers for cloud. One config file controls the entire switch.
+- **Subset extraction** — `--pages` limits which PDF pages or Excel sheets are normalized and extracted.
 
 ## Installation
 
@@ -67,13 +65,32 @@ hermes init
 
 This creates `~/.hermes/config.toml` with default settings, initializes the SQLite database, and installs editable example schemas under `~/.hermes/hermes_user/examples/` (vehicle fleet and generic table copies; existing files are left unchanged). The default `default_schema` in that config points at the local package (`hermes_user.examples.generic_table:GenericRow`) so extraction works without relying on site-packages paths. Hermes prepends `~/.hermes` to the import path when loading schemas, so you do not need to set `PYTHONPATH`.
 
-### 2. Start Ollama
+### 2. Configure your LLM provider
 
-Make sure [Ollama](https://ollama.ai) is running with a model pulled:
+**Local (Ollama)** — install [Ollama](https://ollama.ai) and pull a model:
 
 ```bash
 ollama pull qwen3:8b
 ```
+
+The default config uses Ollama. No API keys, no data leaves the machine.
+
+**Cloud (LiteLLM)** — set the provider and key in `~/.hermes/config.toml`:
+
+```toml
+[llm]
+provider = "litellm"
+
+[llm.litellm]
+model = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+```
+
+```bash
+export OPENAI_API_KEY=sk-...
+```
+
+Any LiteLLM-supported provider (OpenAI, Anthropic, Google) works the same way. See **Configuration** for full options.
 
 ### 3. Extract
 
@@ -154,7 +171,9 @@ hermes clean --all
 hermes clean -f abc123   # skip confirmation (e.g. scripts)
 ```
 
-### 7. Retry Failures
+### 7. Retry and Resume
+
+**Retry** replays chunks that landed in the dead-letter queue:
 
 ```bash
 hermes retry               # Retry all pending DLQ items
@@ -164,16 +183,14 @@ hermes retry --model gpt-4o-mini  # Retry with a different model
 
 After replays, a job is marked **completed** only when there are no pending DLQ rows **and** every chunk has an extraction result (an empty DLQ alone does not mean all chunks ran—e.g. after interrupt).
 
-### 8. Resume extraction (same job)
-
-If normalization and chunking already finished but extraction stopped early (crash, kill, or Ctrl+C), you can continue LLM work for **the same job id** without re-normalizing:
+**Resume** continues extraction for a job that stopped early (crash, kill, or Ctrl+C) without re-normalizing:
 
 ```bash
 hermes extract --resume abc123
 hermes extract --resume abc123 --workers 4 --model gpt-4o-mini
 ```
 
-Hermes rebuilds chunks from the stored normalized Markdown under the job directory, checks that the chunk count still matches the job metadata (so your extraction config should be unchanged), and skips chunk indices that already have rows in `extraction_results`. The original file path is not required; if you pass one with `--resume`, it is ignored. This complements **`hermes retry`**, which only replays rows already in the dead-letter queue.
+Hermes rebuilds chunks from the stored normalized Markdown under the job directory, checks that the chunk count still matches the job metadata (so your extraction config should be unchanged), and skips chunk indices that already have rows in `extraction_results`. The original file path is not required; if you pass one with `--resume`, it is ignored. **`retry`** replays DLQ failures; **`--resume`** picks up chunks that never ran.
 
 ## Testing
 
@@ -215,6 +232,23 @@ After both tests complete, Hermes prints a full telemetry report:
 - **Pipeline stages** — duration of preflight, normalization, chunking, and extraction.
 - **LLM stats** — total calls, tokens in/out, avg/min/max latency, repair attempts, validation failures.
 - **Suite summary** — provider, concurrency mode, total wall time, aggregate token usage.
+
+### Example output (illustrative, not SLA)
+
+Representative run against `gpt-4o-mini` with 4 workers on the bundled synthetic fixtures. Chunk counts depend on `MAX_TABLE_ROWS_PER_CHUNK` and model context window; numbers below reflect a single run, not a guarantee.
+
+```
+Excel fixture (VehicleRecord, 1 500 rows)
+  Chunks: 154 · LLM calls: 154 · Validation failures: 0 · Repairs: 0
+  Avg latency: ~18s/call · Tokens: ~160k in, ~144k out · Wall: ~687s
+
+PDF fixture (insurance policy, 15 pages)
+  Chunks: 11 · LLM calls: 15 · Validation failures: 6 · Repairs: 4
+  2 chunks stayed in DLQ — correctly: they contained boilerplate with
+  no extractable rows under the schema.
+```
+
+The PDF result is the interesting signal. Of 6 validation failures, 4 were **recoverable** — the model's first JSON didn't match the schema, Hermes re-prompted with error context, and the repair attempt passed. The remaining 2 were **structurally empty**: chunks with no entities to extract. The validator correctly rejected them and the DLQ preserved them for inspection rather than inventing rows. That distinction — recoverable vs legitimately empty — is what `hermes status` and the DLQ are designed to surface.
 
 ## Configuration
 
@@ -294,21 +328,22 @@ hermes extract invoice.pdf --schema my_schemas.invoice:InvoiceItem
 ## Architecture
 
 ```
-Document → Preflight → Normalize (to Markdown) → Chunk → LLM Extract → Validate → SQLite
-                                                              ↑                ↓
-                                                        Repair Loop     Dead Letter Queue
+Document → Preflight → Normalize (to Markdown) → Chunk → Bind Contract → LLM Extract → Validate → SQLite
+                                                              │                ↑             ↓
+                                                              │          Repair Loop    Dead Letter Queue
+                                                              ↓
+                                                  contract_id ← schema snapshot + prompt version
 ```
 
-### Memory Safety
+### Streaming and memory safety
 
 Hermes is designed for large documents on modest hardware:
 
 - Excel files are streamed with `openpyxl` read-only mode (50 rows at a time)
 - PDF pages are processed one at a time; pixmaps are deleted immediately
-- Chunks are processed sequentially by default (parallel opt-in for cloud)
 - Results are persisted after each chunk, not batched
 - **Ctrl+C** stops extraction cooperatively: the job can be left **partial** or **failed** with progress saved, not stuck in “extracting”
-- **`hermes extract --resume <job_id>`** continues LLM extraction after interrupt or crash once chunking has completed (see §8 above)
+- **`hermes extract --resume <job_id>`** continues LLM extraction after interrupt or crash once chunking has completed (see §7 above)
 - All inter-stage communication uses file paths, never raw bytes
 
 ### Extraction contracts (SQLite)

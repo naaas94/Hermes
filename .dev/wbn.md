@@ -38,3 +38,5 @@ Rationale summary: default CI proves correctness of the mocked, fast path; valid
 ---
 
 - | **§5** | `--quiet` | Audit mentioned verbosity; `--verbose` exists; **no `--quiet`** unless added later. |
+
+---
