@@ -24,7 +24,8 @@ ocr_confidence_threshold = 0.7  # Re-OCR at higher DPI if below this
 ocr_timeout_seconds = 0         # Per-page OCR limit; 0 = unlimited (thread-based; may not cancel native work)
 
 [storage]
-base_path = "./storage"
+# ~ expanded via pathlib; keeps data under the Hermes home dir, not next to cwd.
+base_path = "~/.hermes/storage"
 
 [extraction]
 default_schema = "hermes.schemas.examples.generic_table:GenericRow"

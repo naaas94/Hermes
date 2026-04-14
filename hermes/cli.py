@@ -630,7 +630,7 @@ def init() -> None:
             console.print("[yellow]config.toml.example not found, creating minimal config[/yellow]")
             default_config = (
                 '[llm]\nprovider = "ollama"\nmodel = "qwen3:4b"\n\n'
-                '[storage]\nbase_path = "./storage"\n\n'
+                '[storage]\nbase_path = "~/.hermes/storage"\n\n'
                 f'[extraction]\ndefault_schema = "{DEFAULT_USER_SCHEMA_REF}"\n'
             )
             config_dest.write_text(default_config, encoding="utf-8")
