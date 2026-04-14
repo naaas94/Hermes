@@ -12,7 +12,7 @@ def test_default_config():
     assert cfg.llm.context_window_tokens == 8192
     assert cfg.llm.max_retries == 2
     assert cfg.llm.litellm.model == "gpt-4o-mini"
-    assert cfg.storage.base_path == "./storage"
+    assert cfg.storage.base_path == "~/.hermes/storage"
     assert cfg.extraction.default_schema == "hermes.schemas.examples.generic_table:GenericRow"
     assert cfg.normalization.ocr_timeout_seconds == 0
 
@@ -45,4 +45,4 @@ def test_parse_config_from_dict():
 def test_parse_config_empty_dict():
     cfg = _parse_config({})
     assert cfg.llm.provider == "ollama"
-    assert cfg.storage.base_path == "./storage"
+    assert cfg.storage.base_path == "~/.hermes/storage"

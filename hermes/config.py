@@ -45,7 +45,8 @@ class NormalizationConfig:
 
 @dataclass(frozen=True)
 class StorageConfig:
-    base_path: str = "./storage"
+    # User-local default so behavior does not depend on shell cwd (e.g. protected dirs on Windows).
+    base_path: str = "~/.hermes/storage"
 
 
 @dataclass(frozen=True)
