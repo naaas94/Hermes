@@ -939,13 +939,13 @@ def _process_chunk(
                 tokens_in=resp.tokens_in,
                 tokens_out=resp.tokens_out,
                 total_latency_ms=resp.latency_ms,
-                validation_passed=is_last and bool(result.validated) and not result.error,
+                validation_passed=is_last and not result.error,
                 validation_error=result.error if is_last else "",
                 raw_output=resp.content,
             )
             save_llm_run(conn, run, commit=False)
 
-        if result.validated:
+        if not result.error:
             records_json = json.dumps(
                 [r.model_dump(mode="json") for r in result.validated]
             )

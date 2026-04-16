@@ -12,6 +12,8 @@ import pytest
 from hermes.db import get_connection
 from hermes.models import Chunk, LLMResponse
 
+_BOILERPLATE_MARKER = "BOILERPLATE_EVAL_NEGATIVE"
+
 
 @pytest.fixture()
 def mock_llm_response():
@@ -64,7 +66,19 @@ def test_full_pipeline_with_excel(
     monkeypatch.setattr("hermes.ingestion.storage.get_storage_base", lambda: storage_path)
 
     mock_client = MagicMock()
-    mock_client.chat.return_value = mock_llm_response
+
+    def _chat_excel(system_prompt: str, user_prompt: str) -> LLMResponse:
+        if _BOILERPLATE_MARKER in user_prompt:
+            return LLMResponse(
+                content="[]",
+                model=mock_llm_response.model,
+                tokens_in=20,
+                tokens_out=5,
+                latency_ms=1,
+            )
+        return mock_llm_response
+
+    mock_client.chat.side_effect = _chat_excel
     mock_client.check_ready.return_value = True
 
     with patch("hermes.extraction.pipeline.create_llm_client", return_value=mock_client):
@@ -84,7 +98,7 @@ def test_full_pipeline_with_excel(
     assert job.contract_id is not None
 
     results = get_results_for_job(conn, job_id)
-    assert len(results) >= 1
+    assert len(results) >= 2
     assert all(r.contract_id == job.contract_id for r in results)
 
     runs = get_llm_runs_for_job(conn, job_id)
@@ -121,7 +135,19 @@ def test_full_pipeline_with_pdf(
     monkeypatch.setattr("hermes.ingestion.storage.get_storage_base", lambda: storage_path)
 
     mock_client = MagicMock()
-    mock_client.chat.return_value = mock_llm_response
+
+    def _chat_pdf(system_prompt: str, user_prompt: str) -> LLMResponse:
+        if _BOILERPLATE_MARKER in user_prompt:
+            return LLMResponse(
+                content="[]",
+                model=mock_llm_response.model,
+                tokens_in=20,
+                tokens_out=5,
+                latency_ms=1,
+            )
+        return mock_llm_response
+
+    mock_client.chat.side_effect = _chat_pdf
     mock_client.check_ready.return_value = True
 
     with patch("hermes.extraction.pipeline.create_llm_client", return_value=mock_client):
@@ -141,6 +167,7 @@ def test_full_pipeline_with_pdf(
     assert job.contract_id is not None
 
     results = get_results_for_job(conn, job_id)
+    assert len(results) >= 2
     assert results
     assert all(r.contract_id == job.contract_id for r in results)
     runs = get_llm_runs_for_job(conn, job_id)

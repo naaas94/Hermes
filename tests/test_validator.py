@@ -15,6 +15,13 @@ class SampleModel(BaseModel):
     value: int | None = None
 
 
+class AllOptionalRow(BaseModel):
+    """All fields optional — used to test all-null row dropping."""
+
+    marca: str | None = None
+    descripcion: str | None = None
+
+
 def test_strip_fences_json():
     text = '```json\n[{"name": "a"}]\n```'
     assert strip_fences(text) == '[{"name": "a"}]'
@@ -39,6 +46,14 @@ def test_parse_json_single_object():
     records = parse_json_array('{"name": "solo"}')
     assert len(records) == 1
     assert records[0]["name"] == "solo"
+
+
+def test_parse_json_array_empty_dict_is_empty():
+    assert parse_json_array("{}") == []
+
+
+def test_parse_json_array_all_null_dict_is_empty():
+    assert parse_json_array('{"a": null, "b": null}') == []
 
 
 def test_validate_records_valid():
@@ -81,6 +96,52 @@ def test_validate_with_repair_happy_path():
         response, SampleModel, SampleModel.model_json_schema(), mock_client, max_retries=2
     )
     assert len(result.validated) == 1
+    assert result.error == ""
+    mock_client.chat.assert_not_called()
+
+
+def test_validate_with_repair_empty_array_no_repair():
+    from unittest.mock import MagicMock
+
+    from hermes.extraction.validator import validate_with_repair
+
+    response = LLMResponse(
+        content="[]", model="test", tokens_in=5, tokens_out=2, latency_ms=10,
+    )
+    mock_client = MagicMock()
+
+    result = validate_with_repair(
+        response, SampleModel, SampleModel.model_json_schema(), mock_client, max_retries=2
+    )
+    assert result.validated == []
+    assert result.error == ""
+    mock_client.chat.assert_not_called()
+
+
+def test_validate_with_repair_drops_all_null_records():
+    from unittest.mock import MagicMock
+
+    from hermes.extraction.validator import validate_with_repair
+
+    response = LLMResponse(
+        content=json.dumps(
+            [{"marca": None, "descripcion": None}],
+        ),
+        model="test",
+        tokens_in=10,
+        tokens_out=20,
+        latency_ms=100,
+    )
+    mock_client = MagicMock()
+
+    result = validate_with_repair(
+        response,
+        AllOptionalRow,
+        AllOptionalRow.model_json_schema(),
+        mock_client,
+        max_retries=2,
+    )
+    assert result.validated == []
     assert result.error == ""
     mock_client.chat.assert_not_called()
 

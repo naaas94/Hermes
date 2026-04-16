@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from hermes.extraction.prompts import (
+    SYSTEM_PROMPT,
+    USER_PROMPT_TEMPLATE,
     build_repair_prompt,
     build_user_prompt,
     get_current_prompt_version,
@@ -36,3 +38,10 @@ def test_prompt_version_changes_with_template():
     v1 = prompt_version("system A", "user A")
     v2 = prompt_version("system B", "user A")
     assert v1 != v2
+
+
+def test_system_prompt_has_abstention_rule():
+    assert "empty array []" in SYSTEM_PROMPT
+    assert "boilerplate" in SYSTEM_PROMPT
+    assert "If no record in the text matches the schema" in USER_PROMPT_TEMPLATE
+    assert "null-only rows" in USER_PROMPT_TEMPLATE

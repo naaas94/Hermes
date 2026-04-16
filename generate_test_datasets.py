@@ -8,6 +8,15 @@ from fpdf import FPDF
 
 
 def generate_synthetic_excel():
+    """Build a large synthetic fleet workbook for end-to-end stress testing.
+
+    Writes ``test_excel_stress_synthetic.xlsx``. This is **not** a scored accuracy
+    benchmark: it stress-tests chunking, streaming Excel normalization, and validation
+    against ``VehicleRecord``-shaped data with deliberate noise. For regression-style
+    quality measurement, use ``hermes eval`` with frozen manifests and golden JSONL
+    (see README *How we measure quality* and
+    ``.dev/evaluation-and-health-metrics-roadmap.md``).
+    """
     print("Generating synthetic Excel dataset for extraction testing...")
     fake = Faker('es_MX')
     
@@ -46,8 +55,8 @@ def generate_synthetic_excel():
         data.append(row)
         
     df = pd.DataFrame(data)
-    
-    out_path = "test_excel_accuracy_synthetic.xlsx"
+
+    out_path = "test_excel_stress_synthetic.xlsx"
     with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, startrow=3)
         worksheet = writer.sheets['Sheet1']

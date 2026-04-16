@@ -206,7 +206,7 @@ This creates two files in the project root:
 
 | File | Purpose | Details |
 |------|---------|---------|
-| `test_excel_accuracy_synthetic.xlsx` | Extraction accuracy | 1,500 synthetic vehicle fleet rows with realistic noise (null VINs, merged headers, blank rows) matching the `VehicleRecord` schema. |
+| `test_excel_stress_synthetic.xlsx` | Stress / integration | 1,500 synthetic vehicle fleet rows with realistic noise (null VINs, merged headers, blank rows) matching the `VehicleRecord` schema. Exercises chunking and streaming through the full pipeline; it is **not** a formal accuracy benchmark. |
 | `test_pdf_stress_riscbac.pdf` | Stress testing | 15-page synthetic insurance policy PDF with dense legal text, vehicle schedules, and endorsements scattered across pages to test chunking and context-window limits. |
 
 ### Run the Test Suite
@@ -249,6 +249,27 @@ PDF fixture (insurance policy, 15 pages)
 ```
 
 The PDF result is the interesting signal. Of 6 validation failures, 4 were **recoverable** — the model's first JSON didn't match the schema, Hermes re-prompted with error context, and the repair attempt passed. The remaining 2 were **structurally empty**: chunks with no entities to extract. The validator correctly rejected them and the DLQ preserved them for inspection rather than inventing rows. That distinction — recoverable vs legitimately empty — is what `hermes status` and the DLQ are designed to surface.
+
+## How we measure quality
+
+Hermes is **schema-agnostic**: you supply the Pydantic model, so there is no single global “accuracy %” comparable across deployments. Quality work is layered:
+
+- **Contract health** — validation and repair counts from normal runs (already surfaced in telemetry and `hermes status`).
+- **Regression eval** — frozen inputs under `tests/fixtures/eval/` with `*.manifest.yaml` and optional `*.golden.jsonl` baselines; the scorer compares pipeline output to expectations (structural pass, stratified positive/negative chunks, field-level match when goldens exist).
+
+Run the eval harness from the repo root (requires manifests present):
+
+```bash
+hermes eval
+hermes eval --fixture-dir tests/fixtures/eval
+hermes eval --manifest tests/fixtures/eval/sample_excel.manifest.yaml -v
+```
+
+Use `--from-results <job_id>` or `--from-jsonl <path>` to score without re-running extraction. `--output <file.json>` writes machine-readable results; `--update-goldens` refreshes golden files when you intentionally change outputs.
+
+**`hermes test`** (above) remains a **stress / integration** path: large synthetic Excel + multi-page PDF through the real pipeline with telemetry. It complements eval; it does not replace golden regression.
+
+Design background, metric tradeoffs, and future layers (e.g. LLM-as-judge) live in [`.dev/evaluation-and-health-metrics-roadmap.md`](.dev/evaluation-and-health-metrics-roadmap.md) (Part A — evaluation).
 
 ## Configuration
 

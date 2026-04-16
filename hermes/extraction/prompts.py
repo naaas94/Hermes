@@ -8,7 +8,9 @@ from typing import Any
 SYSTEM_PROMPT = (
     "You are a document data extractor. Given raw text from a document, extract all "
     "records that match the provided JSON schema. Return a JSON array of objects. "
-    "Do not invent data not present in the text. If a field cannot be determined, use null."
+    "Do not invent data not present in the text. If a field cannot be determined, use null. "
+    "If the text contains no records matching the schema (for example boilerplate, cover pages, "
+    "or unrelated content), return an empty array [] and nothing else."
 )
 
 USER_PROMPT_TEMPLATE = """\
@@ -25,6 +27,8 @@ USER_PROMPT_TEMPLATE = """\
 ## Instructions
 
 Extract all records from the document text above that match the target schema.
+If no record in the text matches the schema, return [] — do not emit placeholder rows,
+null-only rows, or explanatory objects.
 Return ONLY a JSON array of objects. Each object must conform to the schema.
 If a field's value cannot be determined from the text, set it to null.
 Do not include any explanation — only the JSON array."""

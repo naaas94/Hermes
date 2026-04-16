@@ -52,7 +52,7 @@ Labels are the **scaffold**: cheap to author (even heuristically — e.g. “end
 
 ### Products & tooling (reference)
 
-Useful as **patterns** even if Hermes stays local-first:
+Useful as **patterns** even if Hermes stays primitives based or local:
 
 - **LangSmith / Langfuse** — Traces, datasets, human annotation, A/B prompts. Strong when you already use LangChain-style flows; Hermes would need adapters to log runs.
 - **Braintrust** — Scoring functions, eval loops, comparisons across prompts/models; good fit for “run extraction → score → diff.”
@@ -62,13 +62,13 @@ Useful as **patterns** even if Hermes stays local-first:
 
 **Queued implementation (eval)**
 
-- [ ] **Stratified eval manifest** — For frozen fixtures, a small JSON/YAML mapping (chunk index or page range → `positive` | `negative`, optional notes). Drive **separate** metrics: recall / extraction success on positives; false positives (and optional “allowed empty”) on negatives.
-- [ ] **Scorer rules for negatives** — Align with product: if empty extraction is valid when no entities exist, the scorer should not count that as a regression (Hermes’s current validator may still mark the chunk failed — eval can bridge that gap until behavior changes).
-- [ ] **Golden outputs** — For 1–3 frozen fixtures (Excel + PDF), commit expected JSONL (or normalized form) + a scorer script (field match + tolerances for numbers/dates).
-- [ ] **`hermes eval` or `pytest` entry** — Run pipeline on fixtures, compare to golden, exit non-zero on regression; optional `--update-goldens`.
-- [ ] **Align naming** — `test_excel_accuracy_synthetic.xlsx` implies accuracy testing; either add real accuracy metrics or rename docs to “stress / integration” to avoid confusion.
-- [ ] **Optional export** — Emit eval results as JSON for CI artifacts (JUnit-style or custom).
-- [ ] **Docs** — Short “How we measure quality” section in README pointing to this roadmap.
+- [x] **Stratified eval manifest** — For frozen fixtures, a small JSON/YAML mapping (chunk index or page range → `positive` | `negative`, optional notes). Drive **separate** metrics: recall / extraction success on positives; false positives (and optional “allowed empty”) on negatives.
+- [x] **Scorer rules for negatives** — Align with product: if empty extraction is valid when no entities exist, the scorer should not count that as a regression (Hermes’s current validator may still mark the chunk failed — eval can bridge that gap until behavior changes).
+- [x] **Golden outputs** — For 1–3 frozen fixtures (Excel + PDF), commit expected JSONL (or normalized form) + a scorer script (field match + tolerances for numbers/dates).
+- [x] **`hermes eval` or `pytest` entry** — Run pipeline on fixtures, compare to golden, exit non-zero on regression; optional `--update-goldens`.
+- [x] **Align naming** — Renamed synthetic Excel to `test_excel_stress_synthetic.xlsx` (was `test_excel_accuracy_synthetic.xlsx`); docs describe stress/integration vs `hermes eval` goldens.
+- [x] **Optional export** — Emit eval results as JSON for CI artifacts (JUnit-style or custom).
+- [x] **Docs** — Short “How we measure quality” section in README pointing to this roadmap.
 
 ---
 
@@ -115,7 +115,7 @@ Hermes claims **memory-safe** (bounded RAM, streaming, page-at-a-time) and **sca
 
 ### Structlog & telemetry (implementation direction)
 
-Today the codebase uses **stdlib `logging`**. Moving toward **structured logs** makes aggregation and dashboards feasible without losing local-first operation.
+Today the codebase uses **stdlib `logging`**. Moving toward **structured logs** makes aggregation and dashboards feasible without losing local-first operation. [Update, hermes is no longer local first but rather local is a feature]
 
 **Recommended approach**
 
