@@ -11,11 +11,12 @@
 
 Go over [evaluation-and-health-metrics-roadmap.md]
     - instantiate roboust eval
-    - don't undersell or lean on scalability and memory safe features - The selling points
+        - don't undersell or lean on scalability and memory safe features - The selling points
 
-        - part a sort of done:
-            ran retros to feed back into skills orch and exc
-            have gaps to fill in /audits/
-                -run the orch on the remaining gaps + exec 
+            - part a sort of done:
+                ran retros to feed back into skills orch and exc
+                have gaps to fill in /audits/
+                    -run the orch on the remaining gaps + exec [4_17 done]
 
-        - plan b already segmented and waiting for part a to be confimed done for exec
+            - plan b already segmented and waiting for part a to be confimed done for exec
+                - 4_17 completed 
