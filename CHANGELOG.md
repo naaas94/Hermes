@@ -1,5 +1,25 @@
 # Changelog
 
+## [schema 2.0] — 2026-04-16
+
+- T5: README **Benchmarks & memory** (claims, `hermes bench` usage, reference-hardware table from committed `benchmarks/<date>_<sha>.json`, methodology); Part B roadmap items in `.dev/evaluation-and-health-metrics-roadmap.md` marked done.
+- **CI bench artifact T6** (`.github/workflows/ci.yml`): on **push to `main` only**, after tests, run **`hermes bench --mock-llm --output benchmarks`** (writes **`benchmarks/<YYYYMMDD>_<short-sha>.json`**), **`continue-on-error`** with a **5-minute** step timeout, and upload artifact name **`bench-summary-<full-sha>`** (`actions/upload-artifact`). No threshold gate; artifacts are informational (runner RSS/timing vary). Skipped bench steps (non-main / failed job before bench) do not upload.
+- **Benchmark harness T4** (`hermes/bench/runner.py`, `hermes/bench/workloads.py`, `hermes/cli.py`, `benchmarks/.gitkeep`, `tests/test_bench_runner.py`): add **`hermes bench`** with **`BenchWorkload` / `BenchResult` / `BenchSummary`**, **`run_bench`** (mockable pipeline, optional dual **console** vs **JSON** NDJSON comparison when **structlog** is installed, **`dual_sink_overhead_pct`** and **`bench.dualsink.regression`** warning when overhead exceeds 10% on **`pdf_text_small`**), in-process RSS peak from **`rss.sample`** plus **`resource.getrusage`** where available, and **`benchmarks/<YYYYMMDD>_<short-sha>.json`** (+ optional **`.csv`**). Standard workloads use committed **`tests/fixtures/eval`** fixtures and optional repo-root stress PDF with **`--include-large`**. **Decision log:** `.dev/part_b/decisions/T4.md`.
+- **RSS sampling T3** (`hermes/obs/sampling.py`, `hermes/extraction/pipeline.py`, `tests/test_obs_sampling.py`): add **`sample_rss`**, **`stage_timer`** ( **`stage.start`** / **`stage.end`** plus **`rss.sample`** at boundaries; optional **`rss_sampling_interval_s`** periodic thread for **`normalization`** only), optional **`psutil`** with one-time **`rss.sample.unavailable`** warning, and wire stages through **`bind_job`** + timers at preflight, normalization, chunking, and extraction. Failures in emit paths are suppressed per the observability error envelope; stage errors are recorded on **`stage.end`** **`detail`** then re-raised.
+- **Observability logging T2** (`hermes/obs/logging.py`, `hermes/config.py`, `hermes/cli.py`, `tests/test_obs_logging.py`): add **`ObservabilityConfig`** (`log_format`, `log_dir`, `log_ndjson`) and **`configure_logging` / `get_logger` / `bind_job`**. Default console format matches the previous **`basicConfig`**; optional NDJSON append under **`hermes-<YYYYMMDD>.ndjson`**. **`log_format="json"`** requires structlog via **`[obs]`** or startup raises **`HermesObsExtraRequired`**. Invalid **`log_format`** falls back to console with a warning. **Decision log:** `.dev/part_b/decisions/T2.md`.
+- **Observability schema T1.1** (`hermes/obs/schema.py`, `tests/test_obs_schema.py`): bump **`LogSchemaVersion`** / **`CURRENT_LOG_SCHEMA_VERSION`** to **`2.0`**. Narrow **`StageName`** to **`preflight`**, **`normalization`**, **`chunking`**, **`extraction`** (same strings as `save_pipeline_stage` / `pipeline_stages.stage`). Remove **`repair`** / **`export`** as stage labels; repair attempts are observed via **`llm.call.run_type`** (`extraction` \| `retry` \| `repair`, default **`extraction`**). Add **`HermesObsExtraRequired`** for the v0.2 contract: JSON NDJSON logging requires the **`[obs]`** extra (enforced in **`configure_logging`**, T2). **Decision log:** `.dev/part_b/decisions/T1.md` (v0.2 section).
+
+**Migration (v1.0 NDJSON → v2.0)** (no runtime rewriter; drop or re-emit dev logs as needed):
+
+| Old (v1.0) `stage` | New (v2.0) | Note |
+|--------------------|------------|------|
+| `"preflight"` | `"preflight"` | Unchanged |
+| `"normalize"` | `"normalization"` | Rename |
+| `"chunk"` | `"chunking"` | Rename |
+| `"extract"` | `"extraction"` | Rename |
+| `"repair"` | *(reclassify)* | Not a stage; use `llm.call` with `run_type="repair"` |
+| `"export"` | *(drop)* | Not a stage in v2.0 |
+
 ## 2026_04_16
 
 - **Observability schema T1** (`hermes/obs/schema.py`, `hermes/obs/__init__.py`, `tests/test_obs_schema.py`, `pyproject.toml`): introduce version **`1.0`** NDJSON event catalog (`EventName`, `StageName`, `LogSchemaVersion`, `CURRENT_LOG_SCHEMA_VERSION`), common **`BaseEvent`** fields, per-event Pydantic models and **`HermesLogEvent`** discriminated union, **`EVENT_FIELD_CATALOG`** for documented field sets, and **`validate_event()`** for non-throwing validation in tests and callers. Pipeline DB stages use different spellings than logging (**e.g.** `normalization` vs `normalize`); **`StageName`** is the canonical observability vocabulary per Part B. Optional **`[obs]`** extra lists **`structlog`** and **`psutil`** for upcoming logging/RSS work. **Decision log:** `.dev/part_b/decisions/T1.md`.

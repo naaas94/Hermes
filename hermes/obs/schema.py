@@ -5,13 +5,13 @@
 - **Additive** changes (new optional fields on an event, or a new ``event`` value
   added to :data:`EventName`) → **no** ``schema_version`` bump for the same major
   line; prefer bumping the **minor** segment when you need to signal new optional
-  data (e.g. ``1.0`` → ``1.1``).
+  data (e.g. ``2.0`` → ``2.1``).
 - **Breaking** changes (field removed or renamed, type narrowed, or meaning of a
   field changed) → bump **major** (e.g. ``1.x`` → ``2.0``) and document in the
   changelog.
 
-Pipeline code may use different spellings in persistence (e.g. ``normalization``
-in SQLite); :data:`StageName` is the **canonical logging** name for that phase.
+:data:`StageName` literals match the strings persisted by ``save_pipeline_stage``
+(``pipeline_stages.stage`` in SQLite) — one vocabulary, no emit-time alias map.
 """
 
 from __future__ import annotations
@@ -20,6 +20,17 @@ import re
 from typing import Annotated, Any, Final, Literal, get_args
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+
+
+class HermesObsExtraRequired(RuntimeError):
+    """Raised when NDJSON JSON logging is requested without the optional ``[obs]`` extra."""
+
+    def __init__(self, message: str | None = None) -> None:
+        super().__init__(
+            message
+            or "JSON structured logging requires the optional [obs] extra "
+            "(install with: pip install 'hermes[obs]')"
+        )
 
 
 def _literal_union_args(alias: object) -> tuple[Any, ...]:
@@ -31,11 +42,11 @@ def _literal_union_args(alias: object) -> tuple[Any, ...]:
 # Version
 # -----------------------------------------------------------------------------
 
-type LogSchemaVersion = Literal["1.0"]
+type LogSchemaVersion = Literal["2.0"]
 """Supported ``schema_version`` strings for this module (semver-ish major.minor)."""
 
-CURRENT_LOG_SCHEMA_VERSION: Final[LogSchemaVersion] = "1.0"
-"""Default schema version emitted by Hermes for v1 observability events."""
+CURRENT_LOG_SCHEMA_VERSION: Final[LogSchemaVersion] = "2.0"
+"""Default schema version emitted by Hermes for NDJSON observability events."""
 
 _SCHEMA_VERSION_RE = re.compile(r"^\d+\.\d+$")
 
@@ -56,14 +67,9 @@ type EventName = Literal[
     "bench.summary",
 ]
 
-type StageName = Literal[
-    "preflight",
-    "normalize",
-    "chunk",
-    "extract",
-    "repair",
-    "export",
-]
+type StageName = Literal["preflight", "normalization", "chunking", "extraction"]
+
+type LlmCallRunType = Literal["extraction", "retry", "repair"]
 
 _EVENT_NAMES: tuple[str, ...] = tuple(
     str(x) for x in _literal_union_args(EventName)
@@ -103,7 +109,7 @@ EVENT_FIELD_CATALOG: dict[str, dict[str, Any]] = {
     "llm.call": {
         "required": ("model", "tokens_in", "tokens_out"),
         "optional": ("chunk_index", "latency_ms", "run_type"),
-        "notes": "LLM invocation; no prompts or secrets in payload.",
+        "notes": "LLM invocation; run_type defaults to extraction; no prompts/secrets.",
     },
     "job.start": {
         "required": (),
@@ -139,12 +145,11 @@ EVENT_FIELD_CATALOG: dict[str, dict[str, Any]] = {
 
 
 class BaseEvent(BaseModel):
-    """Common fields carried by every Hermes NDJSON event (v1)."""
+    """Common fields carried by every Hermes NDJSON event."""
 
     schema_version: str = Field(
         ...,
-        description="Log schema version; must match :data:`CURRENT_LOG_SCHEMA_VERSION` "
-        "for v1 events.",
+        description="Log schema version; must match :data:`CURRENT_LOG_SCHEMA_VERSION`.",
     )
     ts: str = Field(..., description="ISO8601 timestamp in UTC (with Z or explicit offset).")
     event: EventName
@@ -189,7 +194,10 @@ class LlmCallEvent(BaseEvent):
     tokens_out: int
     chunk_index: int | None = None
     latency_ms: int | None = None
-    run_type: str | None = None
+    run_type: LlmCallRunType = Field(
+        default="extraction",
+        description="Mirrors LLMRun.run_type; repair/retry are not pipeline stages.",
+    )
 
 
 class JobStartEvent(BaseEvent):
@@ -249,7 +257,7 @@ _event_adapter: TypeAdapter[HermesLogEvent] = TypeAdapter(HermesLogEvent)
 
 
 def validate_event(data: dict[str, Any]) -> bool:
-    """Return True if ``data`` is a valid v1 Hermes log event.
+    """Return True if ``data`` is a valid Hermes log event for the current schema.
 
     Invalid or incomplete dicts (missing ``schema_version`` / ``event``, wrong types,
     or unknown ``event``) return False. Validation never raises.

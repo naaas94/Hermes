@@ -30,3 +30,22 @@ jobs:
 
       - name: Pytest
         run: pytest
+
+      - name: Bench summary (main push, informational)
+        id: bench
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: hermes bench --mock-llm --output benchmarks
+
+      - name: Upload bench summary artifact
+        if: >
+          always() &&
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          steps.bench.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-summary-${{ github.sha }}
+          path: benchmarks/*.json
+          if-no-files-found: warn

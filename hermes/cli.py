@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import csv
 import json
-import logging
 import shutil
 import sqlite3
 import sys
@@ -17,6 +16,8 @@ from rich.console import Console
 from rich.table import Table
 
 from hermes import __version__
+from hermes.config import load_config
+from hermes.obs.logging import configure_logging
 
 app = typer.Typer(
     name="hermes",
@@ -34,10 +35,7 @@ def main(
         False, "--verbose", "-v", help="Enable debug logging."
     ),
 ) -> None:
-    level = logging.DEBUG if verbose else logging.WARNING
-    logging.basicConfig(
-        level=level, format="%(name)s %(levelname)s: %(message)s"
-    )
+    configure_logging(load_config(), verbose=verbose)
 
 
 def app_entry() -> None:
@@ -834,6 +832,86 @@ def eval_cli(
         console.print(f"[green]Wrote[/green] {out_path}")
 
     raise typer.Exit(0 if eval_outcomes_ok(outcomes) else 1)
+
+
+@app.command()
+def bench(
+    output_dir: Path = typer.Option(
+        Path("benchmarks"),
+        "--output",
+        "-o",
+        help="Directory for JSON (and optional CSV) benchmark summaries.",
+    ),
+    mock_llm: bool = typer.Option(
+        False,
+        "--mock-llm",
+        help=(
+            "Use the integration-test stub LLM (CI-friendly; "
+            "not representative of prod throughput)."
+        ),
+    ),
+    model: str = typer.Option(
+        "qwen3:4b",
+        "--model",
+        "-m",
+        help="Model override applied to every workload.",
+    ),
+    workers: int = typer.Option(
+        1,
+        "--workers",
+        "-w",
+        help="Concurrency override applied to every workload.",
+    ),
+    write_csv: bool = typer.Option(
+        False,
+        "--csv",
+        help="Also write a CSV file next to the JSON summary.",
+    ),
+    include_large: bool = typer.Option(
+        False,
+        "--include-large",
+        help="Include repo-root stress PDF when test_pdf_stress_riscbac.pdf exists.",
+    ),
+    log_format_compare: bool | None = typer.Option(
+        None,
+        "--log-format-compare/--no-log-format-compare",
+        help=(
+            "Run each workload twice (console + JSON NDJSON) when structlog is installed; "
+            "omit both flags to use per-workload defaults (compare on pdf_text_small only)."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Verbose logging after the run.",
+    ),
+) -> None:
+    """Run standard benchmark workloads and write JSON/CSV summaries under benchmarks/."""
+    from hermes.bench.runner import run_bench
+    from hermes.bench.workloads import default_workloads, resolve_repo_root
+
+    root = resolve_repo_root()
+    workloads = default_workloads(root, include_large_pdf=include_large)
+    out = output_dir if output_dir.is_absolute() else (Path.cwd() / output_dir).resolve()
+    summary = run_bench(
+        workloads,
+        out,
+        model,
+        workers,
+        mock_llm=mock_llm,
+        log_format_compare=log_format_compare,
+        write_csv=write_csv,
+        project_root=root,
+    )
+    cfg = load_config()
+    configure_logging(cfg, verbose=verbose)
+    if summary.dual_sink_regression:
+        console.print(
+            "[yellow]bench.dualsink.regression: dual-sink wall-time overhead "
+            ">10% on pdf_text_small (see NDJSON / logs).[/yellow]"
+        )
+    raise typer.Exit(1 if summary.dual_sink_regression else 0)
 
 
 @app.command()

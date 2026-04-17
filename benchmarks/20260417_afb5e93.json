@@ -1,0 +1,55 @@
+{
+  "bench_run_id": "4a174a38-e4dd-42a8-b9c4-0c551c64f54b",
+  "commit": "afb5e93",
+  "timestamp": "2026-04-17T01:59:42Z",
+  "environment": {
+    "os": "Linux",
+    "python": "3.12.13",
+    "machine": "x86_64"
+  },
+  "results": [
+    {
+      "workload": "pdf_text_small",
+      "commit": "afb5e93",
+      "machine": {
+        "os": "Linux",
+        "python": "3.12.13",
+        "machine": "x86_64"
+      },
+      "duration_s": 3.2948634490021504,
+      "peak_rss_bytes": 138375168,
+      "pages_per_minute": 36.42032571527115,
+      "rows_per_minute": null,
+      "chunks_per_minute": 36.42032571527115,
+      "tokens_in": 520,
+      "tokens_out": 205,
+      "cost_proxy_usd": null,
+      "validation_pass_rate": 1.0,
+      "timestamp": "2026-04-17T01:59:42Z",
+      "log_format": "console",
+      "dual_sink_overhead_pct": null
+    },
+    {
+      "workload": "excel_small",
+      "commit": "afb5e93",
+      "machine": {
+        "os": "Linux",
+        "python": "3.12.13",
+        "machine": "x86_64"
+      },
+      "duration_s": 0.17032822498003952,
+      "peak_rss_bytes": 141651968,
+      "pages_per_minute": null,
+      "rows_per_minute": 352.26105366289875,
+      "chunks_per_minute": 704.5221073257975,
+      "tokens_in": 520,
+      "tokens_out": 205,
+      "cost_proxy_usd": null,
+      "validation_pass_rate": 1.0,
+      "timestamp": "2026-04-17T01:59:42Z",
+      "log_format": "console",
+      "dual_sink_overhead_pct": null
+    }
+  ],
+  "dual_sink_regression": false
+}

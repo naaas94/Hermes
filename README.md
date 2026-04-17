@@ -271,6 +271,54 @@ Use `--from-results <job_id>` or `--from-jsonl <path>` to score without re-runni
 
 Design background, metric tradeoffs, and future layers (e.g. LLM-as-judge) live in [`.dev/evaluation-and-health-metrics-roadmap.md`](.dev/evaluation-and-health-metrics-roadmap.md) (Part A — evaluation).
 
+## Benchmarks & memory
+
+Hermes is built to stay **memory-safe** on large inputs: streaming Excel, page-at-a-time PDF normalization, per-chunk persistence, and no unbounded in-memory aggregation of document bytes. It is **scalable** in the sense that workload size and cloud parallelism are bounded by explicit knobs (`--workers`, page/sheet selection, WAL SQLite) rather than implicit full-document loads.
+
+This section makes those claims **checkable**: the **`hermes bench`** command runs standard workloads (small PDF + Excel fixtures under `tests/fixtures/`, optionally the repo-root stress PDF with `--include-large`) and writes a JSON summary under `benchmarks/` (and optionally CSV with `--csv`). Enable **`[obs]`** (`pip install -e ".[obs]"`) so structured NDJSON logs and RSS sampling behave as documented; the default install still runs the pipeline.
+
+### Running benchmarks locally
+
+From the repository root (fixtures must exist — run `python tests/generate_fixtures.py` first if needed):
+
+```bash
+hermes bench --output benchmarks
+```
+
+Useful flags (see `hermes bench --help` for the full list):
+
+| Flag | Short | Purpose |
+|------|-------|---------|
+| `--output` | `-o` | Directory for JSON (and optional CSV) summaries (default: `benchmarks`). |
+| `--mock-llm` | | Use the integration-test stub LLM (CI-friendly; **not** representative of real throughput or latency). |
+| `--model` | `-m` | Model override for every workload (default: `qwen3:4b`). |
+| `--workers` | `-w` | Concurrency override for every workload (default: `1`). |
+| `--csv` | | Also write a `.csv` next to the JSON summary. |
+| `--include-large` | | Include `test_pdf_stress_riscbac.pdf` when present at the repo root. |
+| `--log-format-compare` / `--no-log-format-compare` | | Control dual **console** vs **JSON** NDJSON runs for workloads that compare log formats (default: compare on `pdf_text_small` only when structlog is available). |
+| `--verbose` | `-v` | Verbose logging after the run. |
+
+CI runs **`hermes bench --mock-llm --output benchmarks`** on pushes to **`main`** and uploads the resulting JSON as a workflow artifact (informational; no threshold gate).
+
+Raw timing and RSS-related events are also available in NDJSON when **`log_format = "json"`** and NDJSON logging are enabled — files are named `hermes-<YYYYMMDD>.ndjson` under the configured **`log_dir`** (see **`config.toml.example`** / **`hermes/config.py`**). Historical committed summaries live under [`benchmarks/`](benchmarks/).
+
+### Reference hardware (point in time)
+
+Numbers below come from [`benchmarks/20260417_afb5e93.json`](benchmarks/20260417_afb5e93.json): **`--mock-llm`**, default model **`qwen3:4b`**, **`workers=1`**, commit **`afb5e93`**, recorded **`2026-04-17`** (UTC). Environment: **Linux x86_64**, **Python 3.12.13** (Docker **`python:3.12-slim-bookworm`** on the maintainer machine). **Treat these as a snapshot**, not an SLA; re-run `hermes bench` and commit a new `benchmarks/<YYYYMMDD>_<short-sha>.json` when you need fresh figures.
+
+| Workload | Peak RSS | Wall time | Throughput (primary) | Model | Date | Commit |
+|----------|----------|-----------|----------------------|-------|------|--------|
+| `pdf_text_small` | ~132 MiB | ~3.3 s | ~36 pages/min | `qwen3:4b` | 2026-04-17 | `afb5e93` |
+| `excel_small` | ~135 MiB | ~0.17 s | ~352 rows/min | `qwen3:4b` | 2026-04-17 | `afb5e93` |
+
+### Methodology (short)
+
+- **What is measured:** wall-clock time per workload, peak RSS for the process (from `rss.sample` NDJSON events and `resource.getrusage` where available), token totals and derived throughput (pages/min, rows/min, chunks/min) from the job after the run.
+- **What is not:** chart generation in-repo, regression thresholds in CI, or remote metric sinks — see the roadmap.
+- **Caveats:** **`--mock-llm`** exercises the pipeline with a stub client; use a real provider for production-like timings. On **Windows**, `peak_rss_bytes` in the JSON summary may be **0** because the stdlib **`resource`** module is unavailable and the bench aggregator may not see RSS lines in the same form as on Linux — run under Linux/WSL or inspect NDJSON **`rss.sample`** lines when **`psutil`** is installed. RSS is **resident set size**, not GPU or mmap-heavy allocator peaks; shared runners and laptops will differ from the table above.
+
+For deeper context on metrics and telemetry tradeoffs, see [`.dev/evaluation-and-health-metrics-roadmap.md`](.dev/evaluation-and-health-metrics-roadmap.md) (Part B — memory and scalability).
+
 ## Configuration
 
 Hermes looks for configuration in this order:

@@ -126,12 +126,12 @@ Today the codebase uses **stdlib `logging`**. Moving toward **structured logs** 
 
 **Queued implementation (observability & proof points)**
 
-- [ ] Define **log schema** (fields above + version field for schema evolution).
-- [ ] Introduce **structlog** (or structured JSON) behind a config flag `log_format = "json" | "console"`.
-- [ ] **RSS sampling** helper used at stage boundaries in `pipeline.py` (optional dependency on `psutil`; degrade gracefully if absent).
-- [ ] **`hermes bench` or documented script** — Standard workloads + RSS/duration output; optional CSV export.
-- [ ] **README subsection** — “Benchmarks & memory” with one table of reference numbers and methodology (file sizes, hardware, provider).
-- [ ] **CI artifact** — Upload bench summary JSON on main-branch runs (if stable enough).
+- [x] Define **log schema** (fields above + version field for schema evolution).
+- [x] Introduce **structlog** (or structured JSON) behind a config flag `log_format = "json" | "console"`.
+- [x] **RSS sampling** helper used at stage boundaries in `pipeline.py` (optional dependency on `psutil`; degrade gracefully if absent).
+- [x] **`hermes bench` or documented script** — Standard workloads + RSS/duration output; optional CSV export.
+- [x] **README subsection** — “Benchmarks & memory” with one table of reference numbers and methodology (file sizes, hardware, provider).
+- [x] **CI artifact** — Upload bench summary JSON on main-branch runs (if stable enough).
 
 ### Tradeoffs (telemetry vs simplicity)
 

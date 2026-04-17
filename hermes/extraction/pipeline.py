@@ -64,6 +64,8 @@ from hermes.models import (
 )
 from hermes.normalization.chunker import chunk_pages
 from hermes.normalization.router import route_normalizer
+from hermes.obs.logging import bind_job, get_logger
+from hermes.obs.sampling import stage_timer
 from hermes.schemas.loader import get_json_schema, load_schema
 
 logger = logging.getLogger(__name__)
@@ -240,69 +242,76 @@ def _resume_pipeline_inner(
         base_completed = len(done)
         base_failed = job.failed_chunks
 
-        ext = _run_extraction_phase(
-            conn=conn,
-            job_id=job_id,
-            contract_id=contract_id,
-            work_chunks=pending,
-            schema_class=schema_class,
-            json_schema=json_schema,
-            cfg=cfg,
-            model_override=model_override,
-            max_workers=max_workers,
-            stop_requested=stop_requested,
-            base_completed=base_completed,
-            base_failed=base_failed,
-            progress_total=len(pending),
-        )
-        if ext is None:
-            extraction_start_ns = time.perf_counter_ns()
-            extraction_started_at = _now_iso()
-            extraction_duration_ms = _elapsed_ms(extraction_start_ns)
-            extraction_ended_at = _now_iso()
-            save_pipeline_stage(
-                conn,
-                PipelineStage(
+        obs_log = get_logger("hermes.obs.sampling")
+        _rss_on = getattr(cfg.observability, "rss_sampling_enabled", True)
+
+        with bind_job(job_id):
+            with stage_timer(
+                "extraction", job_id, obs_log, rss_sampling_enabled=_rss_on
+            ):
+                ext = _run_extraction_phase(
+                    conn=conn,
                     job_id=job_id,
-                    stage="extraction",
-                    started_at=extraction_started_at,
-                    ended_at=extraction_ended_at,
-                    duration_ms=extraction_duration_ms,
-                    detail="llm provider not reachable (resume)",
-                ),
-            )
-            console.print("[red]LLM provider is not reachable. Aborting.[/red]")
-            update_job_status(conn, job_id, JobStatus.FAILED)
-            return job_id
+                    contract_id=contract_id,
+                    work_chunks=pending,
+                    schema_class=schema_class,
+                    json_schema=json_schema,
+                    cfg=cfg,
+                    model_override=model_override,
+                    max_workers=max_workers,
+                    stop_requested=stop_requested,
+                    base_completed=base_completed,
+                    base_failed=base_failed,
+                    progress_total=len(pending),
+                )
+                if ext is None:
+                    extraction_start_ns = time.perf_counter_ns()
+                    extraction_started_at = _now_iso()
+                    extraction_duration_ms = _elapsed_ms(extraction_start_ns)
+                    extraction_ended_at = _now_iso()
+                    save_pipeline_stage(
+                        conn,
+                        PipelineStage(
+                            job_id=job_id,
+                            stage="extraction",
+                            started_at=extraction_started_at,
+                            ended_at=extraction_ended_at,
+                            duration_ms=extraction_duration_ms,
+                            detail="llm provider not reachable (resume)",
+                        ),
+                    )
+                    console.print("[red]LLM provider is not reachable. Aborting.[/red]")
+                    update_job_status(conn, job_id, JobStatus.FAILED)
+                    return job_id
 
-        (
-            extraction_interrupted,
-            sess_completed,
-            sess_failed,
-            extraction_started_at,
-            extraction_start_ns,
-        ) = ext
-        completed = base_completed + sess_completed
-        failed = base_failed + sess_failed
+                (
+                    extraction_interrupted,
+                    sess_completed,
+                    sess_failed,
+                    extraction_started_at,
+                    extraction_start_ns,
+                ) = ext
+                completed = base_completed + sess_completed
+                failed = base_failed + sess_failed
 
-        extraction_duration_ms = _elapsed_ms(extraction_start_ns)
-        extraction_ended_at = _now_iso()
-        stage_detail = (
-            f"resume interrupted; completed_chunks={completed}, failed_chunks={failed}"
-            if extraction_interrupted
-            else f"resume completed_chunks={completed}, failed_chunks={failed}"
-        )
-        save_pipeline_stage(
-            conn,
-            PipelineStage(
-                job_id=job_id,
-                stage="extraction",
-                started_at=extraction_started_at,
-                ended_at=extraction_ended_at,
-                duration_ms=extraction_duration_ms,
-                detail=stage_detail,
-            ),
-        )
+                extraction_duration_ms = _elapsed_ms(extraction_start_ns)
+                extraction_ended_at = _now_iso()
+                stage_detail = (
+                    f"resume interrupted; completed_chunks={completed}, failed_chunks={failed}"
+                    if extraction_interrupted
+                    else f"resume completed_chunks={completed}, failed_chunks={failed}"
+                )
+                save_pipeline_stage(
+                    conn,
+                    PipelineStage(
+                        job_id=job_id,
+                        stage="extraction",
+                        started_at=extraction_started_at,
+                        ended_at=extraction_ended_at,
+                        duration_ms=extraction_duration_ms,
+                        detail=stage_detail,
+                    ),
+                )
 
         if extraction_interrupted:
             final_status = JobStatus.PARTIAL if completed > 0 else JobStatus.FAILED
@@ -410,12 +419,19 @@ def _run_pipeline_inner(
         json_schema = get_json_schema(schema_class)
 
         job_id = uuid.uuid4().hex[:12]
+        obs_log = get_logger("hermes.obs.sampling")
+        _rss_on = getattr(cfg.observability, "rss_sampling_enabled", True)
+        _norm_iv = float(getattr(cfg.observability, "rss_sampling_interval_s", 0) or 0)
 
         # 1. Preflight
         console.print(f"[bold]Preflight:[/bold] {file_path.name}")
         preflight_started_at = _now_iso()
         preflight_start_ns = time.perf_counter_ns()
-        preflight = run_preflight(file_path)
+        with bind_job(job_id):
+            with stage_timer(
+                "preflight", job_id, obs_log, rss_sampling_enabled=_rss_on
+            ):
+                preflight = run_preflight(file_path)
         preflight_duration_ms = _elapsed_ms(preflight_start_ns)
         preflight_ended_at = _now_iso()
         console.print(
@@ -486,33 +502,43 @@ def _run_pipeline_inner(
             else preflight.page_count
         )
         try:
-            if normalize_total > 0:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    BarColumn(),
-                    TaskProgressColumn(),
-                    console=console,
-                ) as progress:
-                    norm_task = progress.add_task("Normalizing", total=normalize_total)
-
-                    def _on_norm_page(_page_idx: int) -> None:
-                        progress.advance(norm_task)
-
-                    normalized_pages = route_normalizer(
-                        file_path,
-                        job_id,
-                        preflight,
-                        page_indices=page_indices_0,
-                        on_page_done=_on_norm_page,
-                    )
-            else:
-                normalized_pages = route_normalizer(
-                    file_path,
+            with bind_job(job_id):
+                with stage_timer(
+                    "normalization",
                     job_id,
-                    preflight,
-                    page_indices=page_indices_0,
-                )
+                    obs_log,
+                    rss_sampling_interval_s=_norm_iv,
+                    rss_sampling_enabled=_rss_on,
+                ):
+                    if normalize_total > 0:
+                        with Progress(
+                            SpinnerColumn(),
+                            TextColumn("[progress.description]{task.description}"),
+                            BarColumn(),
+                            TaskProgressColumn(),
+                            console=console,
+                        ) as progress:
+                            norm_task = progress.add_task(
+                                "Normalizing", total=normalize_total
+                            )
+
+                            def _on_norm_page(_page_idx: int) -> None:
+                                progress.advance(norm_task)
+
+                            normalized_pages = route_normalizer(
+                                file_path,
+                                job_id,
+                                preflight,
+                                page_indices=page_indices_0,
+                                on_page_done=_on_norm_page,
+                            )
+                    else:
+                        normalized_pages = route_normalizer(
+                            file_path,
+                            job_id,
+                            preflight,
+                            page_indices=page_indices_0,
+                        )
         except Exception as e:
             error_msg = f"Normalization failed: {e}"
             normalize_duration_ms = _elapsed_ms(normalize_start_ns)
@@ -556,31 +582,40 @@ def _run_pipeline_inner(
         )
 
         # 5. Chunk
-        console.print("[bold]Chunking...[/bold]")
-        chunking_started_at = _now_iso()
-        chunking_start_ns = time.perf_counter_ns()
-        chunks = chunk_pages(normalized_pages)
-        chunking_duration_ms = _elapsed_ms(chunking_start_ns)
-        chunking_ended_at = _now_iso()
-        save_pipeline_stage(
-            conn,
-            PipelineStage(
-                job_id=job_id,
-                stage="chunking",
-                started_at=chunking_started_at,
-                ended_at=chunking_ended_at,
-                duration_ms=chunking_duration_ms,
-                detail=f"chunks={len(chunks)}, normalized_pages={len(normalized_pages)}",
-            ),
-        )
-        update_job_status(conn, job_id, JobStatus.EXTRACTING, total_chunks=len(chunks))
-        console.print(f"  {len(chunks)} chunk(s) ready")
+        with bind_job(job_id):
+            with stage_timer(
+                "chunking", job_id, obs_log, rss_sampling_enabled=_rss_on
+            ):
+                console.print("[bold]Chunking...[/bold]")
+                chunking_started_at = _now_iso()
+                chunking_start_ns = time.perf_counter_ns()
+                chunks = chunk_pages(normalized_pages)
+                chunking_duration_ms = _elapsed_ms(chunking_start_ns)
+                chunking_ended_at = _now_iso()
+                save_pipeline_stage(
+                    conn,
+                    PipelineStage(
+                        job_id=job_id,
+                        stage="chunking",
+                        started_at=chunking_started_at,
+                        ended_at=chunking_ended_at,
+                        duration_ms=chunking_duration_ms,
+                        detail=(
+                            f"chunks={len(chunks)}, "
+                            f"normalized_pages={len(normalized_pages)}"
+                        ),
+                    ),
+                )
+                update_job_status(
+                    conn, job_id, JobStatus.EXTRACTING, total_chunks=len(chunks)
+                )
+                console.print(f"  {len(chunks)} chunk(s) ready")
 
-        # Save chunk texts to disk for DLQ replay
-        chunk_dir = get_chunk_dir(job_id)
-        for chunk in chunks:
-            chunk_path = chunk_dir / f"chunk_{chunk.chunk_index}.md"
-            chunk_path.write_text(chunk.text, encoding="utf-8")
+                # Save chunk texts to disk for DLQ replay
+                chunk_dir = get_chunk_dir(job_id)
+                for chunk in chunks:
+                    chunk_path = chunk_dir / f"chunk_{chunk.chunk_index}.md"
+                    chunk_path.write_text(chunk.text, encoding="utf-8")
 
         prompt_ver = get_current_prompt_version()
         contract_id = resolve_or_create_extraction_contract(
@@ -589,69 +624,73 @@ def _run_pipeline_inner(
         update_job_contract_id(conn, job_id, contract_id)
 
         # 6. LLM extraction
-        ext = _run_extraction_phase(
-            conn=conn,
-            job_id=job_id,
-            contract_id=contract_id,
-            work_chunks=chunks,
-            schema_class=schema_class,
-            json_schema=json_schema,
-            cfg=cfg,
-            model_override=model_override,
-            max_workers=max_workers,
-            stop_requested=stop_requested,
-            base_completed=0,
-            base_failed=0,
-            progress_total=len(chunks),
-        )
-        if ext is None:
-            extraction_start_ns = time.perf_counter_ns()
-            extraction_started_at = _now_iso()
-            extraction_duration_ms = _elapsed_ms(extraction_start_ns)
-            extraction_ended_at = _now_iso()
-            save_pipeline_stage(
-                conn,
-                PipelineStage(
+        with bind_job(job_id):
+            with stage_timer(
+                "extraction", job_id, obs_log, rss_sampling_enabled=_rss_on
+            ):
+                ext = _run_extraction_phase(
+                    conn=conn,
                     job_id=job_id,
-                    stage="extraction",
-                    started_at=extraction_started_at,
-                    ended_at=extraction_ended_at,
-                    duration_ms=extraction_duration_ms,
-                    detail="llm provider not reachable",
-                ),
-            )
-            console.print("[red]LLM provider is not reachable. Aborting.[/red]")
-            update_job_status(conn, job_id, JobStatus.FAILED)
-            return job_id
+                    contract_id=contract_id,
+                    work_chunks=chunks,
+                    schema_class=schema_class,
+                    json_schema=json_schema,
+                    cfg=cfg,
+                    model_override=model_override,
+                    max_workers=max_workers,
+                    stop_requested=stop_requested,
+                    base_completed=0,
+                    base_failed=0,
+                    progress_total=len(chunks),
+                )
+                if ext is None:
+                    extraction_start_ns = time.perf_counter_ns()
+                    extraction_started_at = _now_iso()
+                    extraction_duration_ms = _elapsed_ms(extraction_start_ns)
+                    extraction_ended_at = _now_iso()
+                    save_pipeline_stage(
+                        conn,
+                        PipelineStage(
+                            job_id=job_id,
+                            stage="extraction",
+                            started_at=extraction_started_at,
+                            ended_at=extraction_ended_at,
+                            duration_ms=extraction_duration_ms,
+                            detail="llm provider not reachable",
+                        ),
+                    )
+                    console.print("[red]LLM provider is not reachable. Aborting.[/red]")
+                    update_job_status(conn, job_id, JobStatus.FAILED)
+                    return job_id
 
-        (
-            extraction_interrupted,
-            sess_completed,
-            sess_failed,
-            extraction_started_at,
-            extraction_start_ns,
-        ) = ext
-        completed = sess_completed
-        failed = sess_failed
+                (
+                    extraction_interrupted,
+                    sess_completed,
+                    sess_failed,
+                    extraction_started_at,
+                    extraction_start_ns,
+                ) = ext
+                completed = sess_completed
+                failed = sess_failed
 
-        extraction_duration_ms = _elapsed_ms(extraction_start_ns)
-        extraction_ended_at = _now_iso()
-        stage_detail = (
-            f"interrupted; completed_chunks={completed}, failed_chunks={failed}"
-            if extraction_interrupted
-            else f"completed_chunks={completed}, failed_chunks={failed}"
-        )
-        save_pipeline_stage(
-            conn,
-            PipelineStage(
-                job_id=job_id,
-                stage="extraction",
-                started_at=extraction_started_at,
-                ended_at=extraction_ended_at,
-                duration_ms=extraction_duration_ms,
-                detail=stage_detail,
-            ),
-        )
+                extraction_duration_ms = _elapsed_ms(extraction_start_ns)
+                extraction_ended_at = _now_iso()
+                stage_detail = (
+                    f"interrupted; completed_chunks={completed}, failed_chunks={failed}"
+                    if extraction_interrupted
+                    else f"completed_chunks={completed}, failed_chunks={failed}"
+                )
+                save_pipeline_stage(
+                    conn,
+                    PipelineStage(
+                        job_id=job_id,
+                        stage="extraction",
+                        started_at=extraction_started_at,
+                        ended_at=extraction_ended_at,
+                        duration_ms=extraction_duration_ms,
+                        detail=stage_detail,
+                    ),
+                )
 
         if extraction_interrupted:
             final_status = JobStatus.PARTIAL if completed > 0 else JobStatus.FAILED
