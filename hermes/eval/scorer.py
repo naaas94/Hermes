@@ -271,8 +271,8 @@ def _field_diffs_for_records(
                 ),
             )
             continue
-        keys = sorted(grow.keys())
-        for key in keys:
+        sorted_keys = sorted(grow.keys())
+        for key in sorted_keys:
             e_val = grow.get(key)
             fname = f"[{gi}].{key}" if n > 1 else key
             out.append(
@@ -280,8 +280,8 @@ def _field_diffs_for_records(
             )
 
     for ai, arow in orphan_a:
-        keys = sorted(arow.keys())
-        for key in keys:
+        sorted_keys = sorted(arow.keys())
+        for key in sorted_keys:
             a_val = arow.get(key)
             fname = f"[{ai}].{key}" if n > 1 else key
             out.append(
