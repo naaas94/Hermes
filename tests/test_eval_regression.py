@@ -37,7 +37,8 @@ def test_eval_regression_mocked_pipeline_matches_golden(
     golden_file = REPO_ROOT / manifest.golden_path
     if not golden_file.is_file():
         pytest.skip("golden file missing")
-    lines = [ln.strip() for ln in golden_file.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    text = golden_file.read_text(encoding="utf-8")
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     records_pos = json.loads(lines[0])
 
     db_path = tmp_path / "reg.db"

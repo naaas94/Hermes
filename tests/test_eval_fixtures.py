@@ -10,7 +10,6 @@ import pytest
 from hermes.eval.manifest import load_manifest
 from hermes.eval.scorer import REASON_MATCH, score_fixture
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -37,7 +36,9 @@ def test_eval_fixture_files_exist(sample_excel_manifest, sample_pdf_manifest) ->
         assert (REPO_ROOT / m.golden_path).is_file()
 
 
-def test_eval_fixture_golden_lines_are_json_arrays(sample_excel_manifest, sample_pdf_manifest) -> None:
+def test_eval_fixture_golden_lines_are_json_arrays(
+    sample_excel_manifest, sample_pdf_manifest
+) -> None:
     for m in (sample_excel_manifest, sample_pdf_manifest):
         assert m.golden_path is not None
         text = (REPO_ROOT / m.golden_path).read_text(encoding="utf-8").strip()

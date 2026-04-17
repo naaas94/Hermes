@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-import pytest
-
 from hermes.eval.normalize import (
     MatchType,
     normalize_date,

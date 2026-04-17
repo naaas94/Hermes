@@ -21,6 +21,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+obs = [
+    "structlog>=24",
+    "psutil>=5.9",
+]
 tiktoken = [
     "tiktoken>=0.7",
 ]

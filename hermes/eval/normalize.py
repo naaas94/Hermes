@@ -27,7 +27,12 @@ def normalize_string(v: Any) -> str:
     return s.casefold().strip()
 
 
-def numbers_close(a: Any, b: Any, rel_tol: float = DEFAULT_REL_TOL, abs_tol: float = DEFAULT_ABS_TOL) -> bool:
+def numbers_close(
+    a: Any,
+    b: Any,
+    rel_tol: float = DEFAULT_REL_TOL,
+    abs_tol: float = DEFAULT_ABS_TOL,
+) -> bool:
     """Whether two numeric values are close using ``math.isclose`` semantics."""
     try:
         fa = float(Decimal(str(a)))
@@ -73,7 +78,7 @@ def _iso_from_parsed_string(original: str, iso_dt: datetime) -> str:
 
 
 def normalize_date(v: Any) -> str | None:
-    """Parse a date/datetime-like value and return a canonical ISO string, or ``None`` if unknown."""
+    """Parse a date/datetime-like value; return a canonical ISO string, or ``None`` if unknown."""
     if v is None:
         return None
     if isinstance(v, datetime):

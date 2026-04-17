@@ -8,7 +8,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from hermes.eval.manifest import ChunkExpectation, ChunkLabel, EvalManifest, load_manifest
+from hermes.eval.manifest import ChunkExpectation, ChunkLabel, load_manifest
 
 
 def _write(tmp: Path, name: str, content: str) -> Path:

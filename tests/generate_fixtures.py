@@ -14,7 +14,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-# Marker substring in boilerplate-only eval regions; regression tests key off this for mocked LLM output.
+# Marker substring in boilerplate-only eval regions; regression tests key off this for mocked LLM.
 BOILERPLATE_EVAL_MARKER = "BOILERPLATE_EVAL_NEGATIVE"
 
 
