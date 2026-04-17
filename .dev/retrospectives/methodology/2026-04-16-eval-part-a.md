@@ -1,44 +1,52 @@
-# Methodology retrospective — Eval Part A
+# Methodology retrospective — Eval Part A (full arc)
 
-**Date:** 2026-04-16
-**Plan:** `.dev/eval/eval-plan.md` v0.1
-**Audit:** `.dev/audits/2026-04-16-eval-part-a.md`
+**Dates:** 2026-04-16 (initial delivery + first audit) through **2026-04-17** (v0.2 remediation + re-audit `pass`).  
+**Plans:** `.dev/eval/eval-plan.md` **v0.1** (T1–T6) → **v0.2 / v0.2.1 / v0.2.2** (remediation + §R10 + closure annotations).  
+**Audit:** `.dev/audits/2026-04-16-eval-part-a.md` (§1–§8 frozen 2026-04-16; **§9 addendum** 2026-04-17).
 
 ## 1. Task identifier
 
-Eval subsystem (Part A of `evaluation-and-health-metrics-roadmap.md`): manifest schema (T1), value normalizer (T2), scorer (T3, architectural), frozen fixtures + goldens (T4), runner with CLI + pytest (T5, architectural), naming + docs (T6). Plus an unplanned T7 (abstention / false-positive remediation) that surfaced during T4/T5 wiring.
+Eval subsystem (Part A of `evaluation-and-health-metrics-roadmap.md`): manifest (T1), normalizer (T2), scorer (T3, architectural), fixtures (T4), runner (T5, architectural), naming/docs (T6). Mid-flight **T7** (abstention / validator–scorer coupling) via decision log only. Post–first-audit **`fail`** on **F-02** / **F-03**: remediation **T8** anchor matching, **T9** page-range resolution (both architectural logs), **T10** exports + CLI help + normalizer/README documentation (trivial packet). Part A eval reported **merge-ready** after re-audit.
 
 ## 2. Plan vs reality
 
-- **DAG match.** The planned DAG (T1, T2 parallel → T3 → T5; T4 in parallel; T6 last) executed essentially as drawn. No subtasks were resequenced. The soft "T6 → T5" dependency held (docs were written after the runner was stable).
-- **Contracts held — with one extension.** §2 type/interface contracts (`EvalManifest`, `ChunkExpectation`, `ChunkLabel`, `EvalResult`, `FieldDiff`, `EvalSummary`) shipped as named, in the named modules. The error-envelope contract (eval never raises into the pipeline; errors as structured data) held. The naming convention held (modules, test files, fixture dir, manifest extension, golden extension, CLI subcommand). **The implicit pipeline contract did drift:** `extraction_results.record_json` can now be `"[]"` (empty array as success), and `llm_runs.validation_passed` is True for empty validated arrays. Both were necessary for negative-chunk scoring; both were captured in `T7-abstention-decision-log.md` and the changelog; neither was added back into the plan's §2 contracts. That's the cleanest contract drift to point at.
-- **Log tier calibration.** T3 and T5 (architectural) both produced decision logs that proved useful in the audit. T1, T2, T4, T6 (standard / standard / standard / trivial) didn't write decision logs and didn't need to. The one near-miss was T1's PyYAML kill criterion firing — a standard-tier subtask hit a "flag and decide" condition. The decision was captured in the changelog entry, which is fine for standard tier; the auditor first flagged this as a process gap and was corrected. Lesson: the kill-criterion convention works as intended; the auditor's heuristic for "kill criterion fired without decision log = gap" was wrong.
+- **Original DAG (v0.1).** T1∥T2 → T3 → T5; T4 parallel where possible; T6 soft after T5. Executed as drawn; T6 trailing T5 held. Nothing notable on unsafe parallelization.
+- **Remediation wave (not on the original DAG).** Triggered by auditor blocking findings, not the initial orchestrator graph. **T8 → T9 → T10** matches natural dependencies (scorer semantics and manifest validation before runner map wiring; T10 polish last). Treat this as a **second planning cycle** glued to the same audit artifact, not a rewrite of the v0.1 mermaid DAG.
+- **Contracts.** v0.1 §2 held for named types and envelopes; **T7** changed upstream behavioral semantics (`record_json`, `validation_passed`) captured in changelog + decision log — **plan amendments (v0.2)** and **§R10** later made implicit construction paths explicit (**E-1/E-2/E-3**), especially **`EvalManifest.model_validate(..., context={"golden_base_dir": ...})`** when `match_key` is set. Re-audit §9.4 accepts **E-2** as **contract fill-in**, not violation.
+- **Plan narrative vs landed policy.** §R4 T8 narrative initially suggested “first-wins + warn”; **T8 decision log** landed **multiset FIFO** — both defensible; the decision log is authoritative. Stale plan text persisted until **v0.2.2** back-annotated §R4 with **Landed** bullets — reconciliation came from **re-audit / closure bump**, not from a standing orchestrator step after each subtask.
+- **Log tiers.** T3, T5, T8, T9 architectural — decision logs used. T10 trivial + packet; appropriate. T1 PyYAML kill criterion + changelog without separate decision log: correct for standard tier (auditor F-10 retraction stands).
 
 ## 3. HALTs and re-plans
 
-- **Zero HALTs fired.** Genuine ambiguity didn't surface in T1–T6.
-- **One discovered coupling that should have triggered HALT consideration but didn't:** the validator's `{}` → `[{}]` coercion defeating negative scoring. This was discovered during T4/T5 (when negative chunks were added to fixtures and the runner started scoring them). The chosen path was a decision log (T7) capturing a four-layer fix in non-goal files, rather than a HALT-and-replan that would have produced a T7 packet.
-- **Was the no-HALT path correct?** On reflection, yes for this specific coupling. The deliverable didn't change — the eval system still measures the same thing — and the fix was narrow and well-scoped. HALT-and-replan would have added ceremony without changing the outcome. **But the decision-log-only path leaves the plan stale:** anyone reading `eval-plan.md` today still sees those four files as non-goals. A "Plan amendments" section pointing at `T7-abstention-decision-log.md` would have closed that gap with one paragraph.
-- **Zero HALTs is plausible here, not suspicious.** The plan was well-scoped, the contracts were specific, the dependency graph was accurate. T7 is the only "should I have HALTed?" judgment call, and it was reasonable.
+- **HALTs.** None fired across **T1–T6** or **T8–T10** in the artifacts reviewed.
+- **T7 (no HALT).** Validator `{}` → `[{}]` vs negative-chunk scoring: discovery during T4/T5; **decision log** path was appropriate — deliverable unchanged, scope narrow. Plan staleness afterward was the process cost; **v0.2 plan amendments** addressed traceability retroactively.
+- **Remediation (no re-orchestrator HALT).** Executors implemented T8/T9/T10 against expanded plan; implicit **Pydantic validation context** surfaced during T8 and became **§R10 E-2** — contract completion, not a HALT trigger in practice.
+- **Silent improvisation?** Nothing suggests executors bypassed HALT-worthy ambiguity; the gap was **plan narrative lag** and **implicit construction contracts** not being in the first v0.2 §R2 text.
 
 ## 4. Adversarial pass calibration
 
-- **Rejected alternatives (plan §5.1):** A (scorer-first, manifest-later), B (monolith), C (external eval tool). None of these came back to bite in execution. The "manifest-first" choice paid off — T1's models drove every downstream subtask cleanly.
-- **Load-bearing assumptions (plan §5.2):**
-  - **#1 (`record_json` is stable JSON array of `model_dump(mode="json")`):** held. The scorer's `_parse_record_json` reads it identically to the export path.
-  - **#2 (existing fixtures are deterministic):** held in CI; not stress-tested across `pymupdf` / `openpyxl` versions, but no failures observed.
-  - **#3 (PyYAML can be added):** kill criterion fired and was resolved by adding the dep. Held.
-  - **#4 (chunking algorithm is stable):** held during execution. T4 had to engineer the boilerplate chunk to be large enough that `_merge_segments` didn't fold it into the positive chunk (note in `tests/generate_fixtures.py:91`). That's an implicit dependency on chunker behavior that the plan called out as a risk; mitigation worked, but the manifest's `chunk_index` values are now coupled to chunker tuning constants. Worth flagging.
-- **Predicted highest-risk subtask (T4 — fixtures):** broadly correct. T4 wasn't where the hardest problem hit, but it was the catalyst — adding negative chunks to fixtures is what surfaced the validator coercion problem (which became T7). The plan's adversarial pass anticipated "we need better fixtures" as the most likely re-scoping trigger; what actually happened was "we need stricter validator behavior to make the negative chunks scoreable." Same root (fixture adequacy), different surface.
-- **What the adversarial pass missed entirely:** the cross-subtask coupling between **scorer rules** (T3, especially the negative-chunk rules in §T3 Scoring rules) and **upstream extraction behavior** (validator's empty/null-dict handling). The orchestrator's adversarial pass §5.4 (hidden couplings) listed T3 ↔ pipeline `record_json` serialization, but did not list T3 ↔ validator coercion semantics. That coupling was the only real re-plan-worthy surprise.
+- **v0.1 plan §5 rejected alternatives (A/B/C).** Did not resurface; manifest-first remained the right fork.
+- **Load-bearing assumptions.** Largely held; chunker/fixture coupling (T4 boilerplate) was the predicted friction surface and **did** surface T7 — same “fixtures” risk family, different mechanism (validator input to scorer rules) than §5.4’s explicit T3 ↔ `record_json` list.
+- **First audit (2026-04-16).** Correctly weighted **F-02** / **F-03** as major capability gaps; initially **over-weighted** process findings (**F-09**, **F-10**) — owner pushback and recalibration were right. Candidate auditor heuristic: before **`major`** on process-only issues, ask whether a **code defect** is implied.
+- **Re-audit (§9).** Focused verification of remediation; **§R4 vs T8** duplicate-anchor policy classified as **documented override** until plan v0.2.2 aligned narrative. **Predicted “highest re-plan risk”** in v0.2 materials pointed at duplicate anchors in goldens; real merge blockers had been **index pairing** and **page_range** — caught by adversarial **audit**, not only by the plan’s internal risk bullets.
 
 ## 5. Methodology gaps surfaced
 
-- **Plan-amendment convention is missing.** When mid-execution discovery produces a decision log instead of a HALT-replan, the plan itself doesn't reflect that. A "Plan amendments" appendix that lists post-hoc additions (T7 → see `T7-abstention-decision-log.md`) would close the gap without forcing every mid-flight insight into a full packet. **Recommendation (do not edit the skill yet):** add as a candidate convention; if a second eval/health task produces another decision-log-only adjustment, codify.
-- **Adversarial pass needs a "trace each scoring/decision rule back to the upstream behavior that produces its input" heuristic.** The scoring rules table in T3 specified what the scorer should do for each (label × output × validation) cell, but nobody traced "for the negative chunk rule to reach `correct_abstention`, what must the validator return?" That backward trace would have caught the `{}` coercion problem at planning time. **Recommendation:** candidate addition to `orchestrator-planning` adversarial pass section, but only if a second task confirms the gap is general (not a one-off).
-- **Auditor heuristic correction.** The auditor's first pass classified two process observations (F-09, F-10) as defects against the plan's process rules. They were either (a) the intended use of decision logs to handle mid-flight discovery, or (b) the documented "flag and decide" path for a kill criterion at standard tier. The auditor needed user pushback to correct. **Recommendation (for `auditor-review` itself):** add a check before classifying any process finding as `major`: "Does this point at a code defect, or only at documentation? If only documentation, max severity is minor." Skill edit is a separate, deliberate act; not editing now.
-- **Contracts schema (plan §2) doesn't have a slot for "implicit upstream contracts the new system depends on."** The eval system's correct operation depends on `record_json` semantics, `validation_passed` semantics, and pipeline persistence rules — none of which were captured as contracts because they're not new types/interfaces, they're behavioral. When T7 changed two of those semantics, there was no contract to update. **Recommendation:** consider adding a "Behavioral contracts depended on" row to §2, listing existing system behaviors the new code reads against. Defer the skill edit.
+- **Plan amendments after decision-log-only work.** Partially closed: **eval-plan** now has **§Plan amendments**, **§v0.2**, **§R10**, and v0.2.2 **§R4 Landed** annotations. Candidate for **orchestrator-planning** after a second task confirms: when a decision log **refines** a §R narrative, **post-land back-annotate** the plan (or add a one-line **Landed** stub) so narrative does not stay stale until audit.
+- **“Trace scoring rules to upstream behavior.”** Still a strong candidate adversarial heuristic (validator coercion vs negative-chunk rules); first audit §8 notes this. Watch one more cycle before skill edit.
+- **Pydantic models with cross-file / context validators.** v0.2 §R2 stated **`match_key`** type-level contract; **construction contract** (file load vs `model_validate` + **context**) appeared as **§R10 E-2** only after T8. Candidate orchestrator prompt: for any new field with **context-dependent validation**, specify **which code paths** construct instances and how. Watch one more task before editing the skill.
+- **“Behavioral contracts depended on”** (upstream semantics not in §2 types row). Still nothing notable beyond what T7/changelog/plan amendments now cover; optional future §2 row.
+- **Auditor calibration** (documentation-only process findings capped at minor / observation). Validated by this task’s recalibration and addendum.
+
+**Do not edit orchestrator / executor / auditor skills from this file** — skill changes stay deliberate after pattern confirmation.
 
 ## 6. Single sentence verdict
 
-The methodology held up — the plan executed cleanly with no HALTs, contracts were honored, decision logs covered the architectural-tier work and the one discovered coupling — but two methodology gaps surfaced (no convention for amending the plan after a decision-log-only adjustment, and the adversarial pass missed a cross-subtask behavioral coupling) that are worth watching on the next task before any skill edits.
+**Partially yes:** the orchestrator/executor loop delivered Part A and closed blocking audit findings with decision logs and tests, but the methodology **leaked twice in documentation mechanics** — **plan narrative vs authoritative decision log** until a closure pass, and **implicit Pydantic construction contracts** until §R10 — both now captured as **watchlist heuristics** rather than urgent skill edits.
+
+## 7. Artifact pointers (authoritative)
+
+- Audit: `.dev/audits/2026-04-16-eval-part-a.md` (addendum **§9** = re-audit `pass`, 2026-04-17).  
+- Plan: `.dev/eval/eval-plan.md` **v0.2.2**.  
+- Decision logs: `.dev/eval/T8-decision-log.md`, `T9-decision-log.md`; T10 packet `T10-packet.md`.  
+- Domain/ stack learning belongs in **retrospective-learning**, not here.

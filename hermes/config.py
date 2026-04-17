@@ -64,6 +64,8 @@ class ObservabilityConfig:
     log_format: str = "console"
     log_dir: str = "logs"
     log_ndjson: bool = False
+    rss_sampling_enabled: bool = True
+    rss_sampling_interval_s: float = 0.0
 
 
 @dataclass(frozen=True)

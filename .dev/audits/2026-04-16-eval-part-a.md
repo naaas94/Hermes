@@ -294,3 +294,119 @@ Findings to feed into `retrospective-learning` (domain/stack):
 - Schema-agnostic field-level diff naturally pushes toward ordered list comparison; an "anchor field" pattern (use the schema's required field as the join key) is probably the right primitive — note for future eval/health work.
 - Currency / percent / date normalization is a category of code where the **inverse function ambiguity** (50 → "50%" or 50 → "50") is the silent killer; a lenient default that auto-detects type from the *value* is fundamentally racy. Per-field type hints (already supported) should be the documented expected usage, not the escape hatch.
 - A "non-goal" in a plan is only as enforceable as the executor's discipline; consider adding a code-side guard (e.g., a CI check that fails when files in a configurable "frozen during this PR" list are modified without explicit override).
+
+---
+
+## Document history
+
+| Version | Date | Notes |
+|---------|------|-------|
+| Original audit | 2026-04-16 | Verdict **`fail`** (F-02, F-03 major). Sections **§1–§8** above are **frozen** as the first-pass record. |
+| Addendum | 2026-04-17 | Post-**v0.2** remediation (T8 / T9 / T10). Re-audit per `auditor-review` skill; does not rewrite §1–§8. |
+
+---
+
+## 9. Addendum — Post-remediation re-audit (2026-04-17)
+
+### 9.1 Audit metadata
+
+| Field | Value |
+|-------|-------|
+| **Task** | Part A eval — layered eval subsystem (`hermes/eval`), fixtures, CLI, remediation |
+| **Orchestrator plan (authoritative)** | `.dev/eval/eval-plan.md` **v0.2** (changelog also lists **0.2.1** addendum for §R10); **§1–§5 + Appendix** preserve v0.1 text; **§Plan amendments**, **§v0.2 Remediation**, **§R10** are additive |
+| **Pre-plan intent** | `.dev/evaluation-and-health-metrics-roadmap.md` **Part A** — stratified manifest, scorer rules, `hermes eval` / pytest, naming, optional export, self-contained path (no external eval vendor in v1) |
+| **Prior audit verdict** | **`fail`** (2026-04-16) on **F-02** (index-only record pairing) and **F-03** (`page_range` never resolved by runner) |
+| **Remediation subtasks** | **T8** anchor matching (`.dev/eval/T8-decision-log.md`), **T9** page-range resolution (`.dev/eval/T9-decision-log.md`), **T10** exports + CLI help + normalizer docstrings (trivial tier; packet `.dev/eval/T10-packet.md`) |
+| **Adversarial focus (this pass)** | **(1)** Anchor path vs live reordering — same intent as first audit F-02, verify fix. **(2)** `page_range` + `chunk_page_map` seam — same as F-03. **(3)** Contract chain T7 → T8/T9 (implicit `source_pages`, `golden_base_dir`, reason-code shift) — integration seams. |
+
+### 9.2 Context chain completeness
+
+| Artifact | Status | Notes |
+|----------|--------|-------|
+| Roadmap Part A | Present | Items checked off in roadmap; aligns with plan Appendix mapping |
+| `eval-plan.md` v0.2.x | Present | §Plan amendments **A-1/A-2** close original **F-09** (non-goals amended; T7 + pipeline edits documented) |
+| T8 / T9 decision logs | Present | Architectural tier; T10 has packet only (trivial) |
+| Changelog **2026-04-17** | Present | Three bullets: T10 polish, T9 page-range, T8 anchor matching |
+| Code: `hermes/eval/*`, `hermes/cli.py` (`eval`), tests | Present | See §9.5 module map |
+| **T7 packet** | Still absent | Plan now records T7 under §Plan amendments; **F-09** downgraded to “closed by amendment” for traceability |
+
+**Limit:** None that block this addendum; the 2026-04-16 note on a missing `T7-packet.md` is **superseded** by `eval-plan.md` §Plan amendments **A-1** (authoritative list of files + implicit contracts).
+
+### 9.3 Intent traceability (intent → plan → code)
+
+- **Roadmap Part A** asked for visible, CI-blocking quality measurement without vendor lock-in; **non-goals** (LLM-as-judge, Part B, core pipeline edits “except …”) are reflected in **eval-plan §1** and **§A-2** amendment.
+- **Subtask → code:** **T8** → `EvalManifest.match_key`, `_pair_records_by_anchor`, `FieldMatch` **`"extra"`**, `EvalSummary.records_*`, fixture manifests with `match_key: numero_serie`. **T9** → `score_fixture(..., chunk_page_map=...)`, `build_chunk_page_map`, `REASON_PAGE_RANGE_AMBIGUOUS`, `sample_pdf_text_by_pages.manifest.yaml`, JSONL/DB tests. **T10** → `hermes/eval/__init__.py` exports, CLI `help=` strings, `normalize.py` module docstring + README line.
+- **Non-goals after remediation:** v0.2 **§R1** still excludes new scoring modes, F-07 golden asymmetry fix, F-14 extra-field detection — **no drift** observed (those paths unchanged).
+
+### 9.4 Contract compliance (eval-plan §2 + v0.2 §R2)
+
+| Contract area | Verdict | Evidence |
+|---------------|---------|----------|
+| **Types / interfaces** | **Met** | `match_key`, `chunk_page_map`, `FieldMatch` includes `"extra"`, `EvalSummary` optional aggregate fields; exports in `hermes/eval/__init__.py` match §R2 package exports row |
+| **Error envelope** | **Met** | Eval remains post-hoc; manifest/golden failures surface as structured `EvalResult` / chunk reasons (spot-check: `REASON_GOLDEN_PARSE_ERROR`, validation errors on bad manifests) |
+| **Naming** | **Met** | Modules and test file names unchanged from plan |
+| **Logging** | **Met** | `hermes.eval.scorer` / `hermes.eval.normalize` (and peers); duplicate-anchor path uses **`logger.warning`** with **`fixture=`**, **`chunk_index=`**, **`match_key=`**, **`duplicate_value=`** in the message — matches plan’s structured-field intent |
+| **Tests** | **Met** | `tests/test_eval_*.py` + `test_eval_exports.py`; pytest **74 passed** for eval-focused selection (2026-04-17 run) |
+
+**Accepted deviation — duplicate-anchor policy wording:** Plan §R4 T8 narrative says “first-wins + warn”; implementation uses **multiset FIFO pairing** (`deque`) per anchor with **one WARNING per duplicate value** (`_warn_duplicate_anchors`). **Classification:** **documented override** — behavior matches **T8 decision log** (“Multiset FIFO pairing”); not silent drift.
+
+**Explicit cross-task ask — “T4 WARN-string vs EventName”:** That pattern belongs to **Part B** observability/bench work (`bench.dualsink.regression` at WARN level vs `EventName` union — see `README.md` “Programmatic consumers” and `.dev/part_b/`). **Part A eval** does not use `EventName`; it uses **stdlib logging** per plan §2. **No Part A contract conflict.**
+
+### 9.5 Decision log audit (T8, T9 vs code)
+
+| Log | Chosen approach | In code? | Stale? |
+|-----|-----------------|----------|--------|
+| **T8** | Deque FIFO pairing; WARN on duplicates; extras/missings; manifest validation for golden missing anchor | Yes (`_pair_records_by_anchor`, `_warn_duplicate_anchors`, `validate_match_key_in_golden_files`) | **No** |
+| **T8 deferred** | Reason shift `missing_output` vs `field_mismatch` + missing diffs under anchor mode | Documented; scorer emits informative `field_mismatch` + missing `FieldDiff`s when appropriate | **No** — matches plan §R5.4 / §R10 **E-3** |
+| **T9** | Contained-in resolution; `chunk_page_map` from `source_pages`; no manifest mutation | Yes (`_resolve_page_range_to_chunk_index` pattern in scorer; runner builds map) | **No** |
+| **T9 supersedes T3 log** | Runner pre-resolves via map, not manifest rewrite | T9 log explicitly states supersession; implementation uses kwargs, not mutating manifest | **No** |
+
+Rejected alternatives in T8/T9 logs (schema introspection, exact-only resolution, manifest rewrite) are **not** implemented.
+
+### 9.6 Adversarial test log (re-run focus)
+
+| ID | Scenario | Expected (post-remediation) | Actual | Verdict |
+|----|----------|----------------------------|--------|---------|
+| **D1** | Two golden rows, actual order swapped, `match_key` set | Match; `records_matched == 2` | `test_eval_scorer_anchor_mode_reorder_invariant` passes | **pass** |
+| **D2** | `page_range` expectation + `chunk_page_map` covering PDF page 1 | Resolves to chunk; scores | `test_eval_scorer_page_range_resolves_with_chunk_page_map` + runner tests with `source_pages` | **pass** |
+| **D3** | `page_range` + two candidate chunks | `page_range_ambiguous` | `test_eval_scorer_page_range_ambiguous` | **pass** |
+| **D4** | `chunk_page_map is None` + `page_range` chunk | `page_range_unresolved` (v0.1 compat) | `test_eval_scorer_page_range_unresolved` | **pass** |
+| **D5** | `normalize_value(50, "50%")` no hint | Lenient ambiguity (original F-01) | Unchanged behavior; **documented** in `normalize.py` module docstring + README pointer | **pass (as coded)** — **documented override**, not a behavior fix |
+| **D6** | Duplicate anchor in golden | WARNING + pairing consumes FIFO | `test_eval_scorer_anchor_mode_duplicate_anchor_warning` | **pass** |
+
+### 9.7 Findings table (addendum only)
+
+| ID | Severity | Type | Phase | Subtask | One-liner |
+|----|----------|------|-------|---------|-----------|
+| A-01 | observation | coverage-gap | 5 | T3 | Manifests with **no** `match_key` and **multi-record** goldens remain **order-sensitive** (v0.1 path); mitigated by **documented** `match_key` on committed fixtures and README |
+| A-02 | observation | — | 4 | — | **F-07** (golden array vs object asymmetry) still **out of scope** per v0.2 §R1; unchanged |
+| A-03 | observation | — | 4 | T3 | **F-14** (extra hallucinated fields not flagged on positives without golden keys) still true by design |
+| A-04 | minor | coverage-gap | 5 | — | `resume_pipeline` + eval scoring **still not directly integration-tested** (same as original **C9** — **unknown** for exotic resume edge cases) |
+
+**Original F-02 / F-03:** **Closed** by T8 / T9; do not carry forward as open findings.
+
+**Original F-04 / F-12:** **Closed** by T10 (exports + CLI help).
+
+**Original F-01 / F-05 / F-06:** **Documented** per T10 (not behavior-changed) — **intentional** per plan §R1 non-goals for v0.2.
+
+### 9.8 Detailed findings (above minor)
+
+None. Addendum findings are **observation** / **minor** only.
+
+### 9.9 Coverage gap list (prioritized, addendum)
+
+| Priority | Gap | Notes |
+|----------|-----|-------|
+| Low | Index-only multi-record manifests without `match_key` | Authors must rely on ordering or set `match_key` |
+| Low | Resume + eval | Same as v0.1 audit **C9** |
+| Deferred product | F-07, F-14 | Explicitly excluded from v0.2 |
+
+### 9.10 Verdict
+
+**`pass`** — The **major** blockers from 2026-04-16 (**F-02**, **F-03**) are **remediated** in code with **architectural decision logs**, **tests**, **changelog**, and **plan amendments**. **F-04** / **F-12** are **closed**. Residual items are **observation**-tier or **documented behavioral** choices (**F-01/F-05/F-06**), not merge-blocking contract breaks.
+
+**Conditions (non-blocking):** Optional future work remains for **F-07**, **F-14**, and stronger **resume** coverage if those surfaces become customer-critical.
+
+---
+
+*End of addendum (2026-04-17).*

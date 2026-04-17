@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from hermes.eval.manifest import EvalManifest, load_manifest
-from hermes.eval.scorer import EvalResult, score_fixture
+from hermes.eval.scorer import EvalResult, parse_source_pages_to_pageset, score_fixture
 
 logger = logging.getLogger("hermes.eval.runner")
 
@@ -55,17 +55,34 @@ def resolve_golden_base_dir(manifest_path: Path, project_root: Path) -> Path:
     return project_root
 
 
+def build_chunk_page_map(job_results: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
+    """Derive inclusive min/max page pair per ``chunk_index`` from ``source_pages`` strings."""
+    out: dict[int, tuple[int, int]] = {}
+    for row in job_results:
+        if "chunk_index" not in row:
+            continue
+        raw = row.get("source_pages")
+        ps = parse_source_pages_to_pageset(raw if raw is None else str(raw))
+        if not ps:
+            continue
+        ci = int(row["chunk_index"])
+        out[ci] = (min(ps), max(ps))
+    return out
+
+
 def job_results_from_db_rows(rows: list[Any]) -> list[dict[str, Any]]:
     """Build ``score_fixture`` job rows from ``ExtractionResult``-like objects."""
     out: list[dict[str, Any]] = []
     for r in rows:
-        out.append(
-            {
-                "chunk_index": int(r.chunk_index),
-                "record_json": r.record_json,
-                "validation_passed": True,
-            },
-        )
+        row: dict[str, Any] = {
+            "chunk_index": int(r.chunk_index),
+            "record_json": r.record_json,
+            "validation_passed": True,
+        }
+        sp = getattr(r, "source_pages", None)
+        if sp is not None:
+            row["source_pages"] = str(sp)
+        out.append(row)
     return out
 
 
@@ -75,7 +92,8 @@ def load_job_results_from_jsonl(path: Path) -> list[dict[str, Any]]:
 
     Each non-empty line must be a JSON object with ``chunk_index`` and either
     ``record_json`` (string) or ``records`` (list of dicts). Optional
-    ``validation_passed`` (bool) is honored.
+    ``validation_passed`` (bool) is honored. Optional ``source_pages`` (string,
+    same format as ``extraction_results``) is passed through for page-range scoring.
     """
     text = path.read_text(encoding="utf-8")
     out: list[dict[str, Any]] = []
@@ -229,6 +247,7 @@ def score_manifest_with_results(
         job_results,
         goldens=None,
         golden_base_dir=resolve_golden_base_dir(manifest_path, project_root),
+        chunk_page_map=build_chunk_page_map(job_results),
     )
 
 

@@ -267,6 +267,8 @@ hermes eval --manifest tests/fixtures/eval/sample_excel.manifest.yaml -v
 
 Use `--from-results <job_id>` or `--from-jsonl <path>` to score without re-running extraction. `--output <file.json>` writes machine-readable results; `--update-goldens` refreshes golden files when you intentionally change outputs.
 
+For fields where the lenient normalizer might match too eagerly (bare integers vs percent strings, ambiguous dates, near-zero comparisons), set `field_type_hint` explicitly in the manifest; see [`hermes/eval/normalize.py`](hermes/eval/normalize.py). When `match_key` is set on a manifest, anchor-mode scoring reports per-record `missing` / `extra` [`FieldDiff`](hermes/eval/scorer.py)s and populates [`EvalSummary`](hermes/eval/scorer.py) `records_matched` / `records_extra` / `records_missing` — callers that branch on coarse chunk `reason` strings should inspect `field_diffs` and those counts for specifics.
+
 **`hermes test`** (above) remains a **stress / integration** path: large synthetic Excel + multi-page PDF through the real pipeline with telemetry. It complements eval; it does not replace golden regression.
 
 Design background, metric tradeoffs, and future layers (e.g. LLM-as-judge) live in [`.dev/evaluation-and-health-metrics-roadmap.md`](.dev/evaluation-and-health-metrics-roadmap.md) (Part A — evaluation).
@@ -318,6 +320,12 @@ Numbers below come from [`benchmarks/20260417_afb5e93.json`](benchmarks/20260417
 - **Caveats:** **`--mock-llm`** exercises the pipeline with a stub client; use a real provider for production-like timings. On **Windows**, `peak_rss_bytes` in the JSON summary may be **0** because the stdlib **`resource`** module is unavailable and the bench aggregator may not see RSS lines in the same form as on Linux — run under Linux/WSL or inspect NDJSON **`rss.sample`** lines when **`psutil`** is installed. RSS is **resident set size**, not GPU or mmap-heavy allocator peaks; shared runners and laptops will differ from the table above.
 
 For deeper context on metrics and telemetry tradeoffs, see [`.dev/evaluation-and-health-metrics-roadmap.md`](.dev/evaluation-and-health-metrics-roadmap.md) (Part B — memory and scalability).
+
+### Programmatic consumers
+
+**Consumer guidance:** code that needs to detect bench regressions must filter log records on `level == "WARNING"` **and** message substring `"bench.dualsink.regression"`, not on `event` equality. If a future plan needs this as a queryable structured event, promote it to an `EventName` member in an additive minor schema bump (`2.0 → 2.1`) — no code will break because widening the Literal is backward-compatible for existing consumers.
+
+See [`.dev/part_b/b-plan.md`](.dev/part_b/b-plan.md) §2 (`EventName` row) and [`.dev/part_b/decisions/T4.md`](.dev/part_b/decisions/T4.md).
 
 ## Configuration
 

@@ -1,4 +1,31 @@
-"""Field-value normalization for golden vs actual comparison (eval scorer)."""
+"""Field-value normalization for golden vs actual comparison (eval scorer).
+
+Known ambiguity classes (behavior is intentional; use ``field_type_hint`` in the manifest
+when you need to pin semantics — see ``normalize_value``):
+
+**Percent vs bare number (verified against**
+``tests/test_eval_normalize.py::test_normalize_value_percent_vs_fraction`` **).**
+Lenient mode may treat plain numbers and percent strings as comparable because
+``parse_percent_value`` rescales integers in ``(0, 100]`` to fractions. For example,
+``normalize_value(50, "50%")`` can match as exact, while mixed large-magnitude cases
+(e.g. ``"200%"`` vs ``2.0``) can diverge because percent vs plain parsing paths differ.
+Set ``field_type_hint`` to ``"number"`` or ``"percent"`` when the field is semantically
+one or the other.
+
+**US vs EU date strings (verified against**
+``tests/test_eval_normalize.py::test_normalize_value_date_cross_format`` **and**
+``tests/test_eval_normalize.py::test_normalize_date_iso_and_us_formats`` **).**
+Multiple ``strptime`` format families are tried; the first match wins, so ambiguous
+slash dates may normalize consistently without being uniquely determined by format.
+Prefer ISO dates (``YYYY-MM-DD``) in goldens and set ``field_type_hint="date"`` to
+disable numeric fall-through.
+
+**Near-zero numeric closeness (verified against**
+``tests/test_eval_normalize.py::test_numbers_close_defaults_and_tolerance`` **).**
+``numbers_close`` uses ``math.isclose`` with ``DEFAULT_ABS_TOL = 0.0``, so values near
+zero are not treated as equal unless you pass a non-zero ``abs_tol`` or route through
+``normalize_value`` with ``field_type_hint="number"`` for lenient defaults.
+"""
 
 from __future__ import annotations
 
@@ -201,6 +228,10 @@ def normalize_value(expected: Any, actual: Any, field_type_hint: str | None = No
 
     ``field_type_hint``: ``None`` (lenient auto), or ``string``, ``number``, ``currency``,
     ``percent``, ``date``, ``strict`` (no normalization — equality only).
+
+    When the default lenient path is too eager (percent vs integer, ambiguous date
+    formats, strict near-zero checks), set ``field_type_hint`` explicitly. See the
+    module docstring for the three documented ambiguity classes and test anchors.
     """
     hint = (field_type_hint or "").strip().casefold() or None
 

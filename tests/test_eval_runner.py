@@ -13,6 +13,7 @@ from hermes.eval.runner import (
     ManifestEvalOutcome,
     ResultsMode,
     apply_golden_updates,
+    build_chunk_page_map,
     discover_manifest_paths,
     eval_outcomes_ok,
     job_results_from_db_rows,
@@ -23,6 +24,7 @@ from hermes.eval.runner import (
     run_eval_suite,
     score_manifest_with_results,
 )
+from hermes.eval.scorer import REASON_PAGE_RANGE_UNRESOLVED
 
 
 def test_runner_discover_manifest_paths(tmp_path: Path) -> None:
@@ -76,10 +78,136 @@ def test_runner_job_results_from_db_rows() -> None:
     row = MagicMock()
     row.chunk_index = 2
     row.record_json = "[{}]"
+    row.source_pages = "3,4"
     out = job_results_from_db_rows([row])
     assert out == [
-        {"chunk_index": 2, "record_json": "[{}]", "validation_passed": True},
+        {
+            "chunk_index": 2,
+            "record_json": "[{}]",
+            "validation_passed": True,
+            "source_pages": "3,4",
+        },
     ]
+
+
+def test_runner_build_chunk_page_map() -> None:
+    m = build_chunk_page_map(
+        [
+            {"chunk_index": 0, "source_pages": "1"},
+            {"chunk_index": 1, "source_pages": ""},
+            {"chunk_index": 2, "record_json": "[]"},
+        ],
+    )
+    assert m == {0: (1, 1)}
+
+
+def test_runner_page_range_manifest_jsonl_with_source_pages(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    man_path = repo / "tests/fixtures/eval/sample_pdf_text_by_pages.manifest.yaml"
+    if not man_path.is_file():
+        pytest.skip("page-range eval manifest missing")
+    manifest = load_manifest(man_path)
+    golden_file = repo / "tests/fixtures/eval/sample_pdf_text.golden.jsonl"
+    line0 = golden_file.read_text(encoding="utf-8").splitlines()[0].strip()
+    jpath = tmp_path / "rows.jsonl"
+    jpath.write_text(
+        json.dumps(
+            {"chunk_index": 0, "record_json": line0, "source_pages": "1"},
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    job = load_job_results_from_jsonl(jpath)
+    res = score_manifest_with_results(manifest, man_path, job, project_root=repo)
+    assert res.error is None
+    assert res.summary is not None
+    assert res.summary.passed_expectations == res.summary.total_expectations
+
+
+def test_runner_page_range_manifest_jsonl_without_source_pages(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    man_path = repo / "tests/fixtures/eval/sample_pdf_text_by_pages.manifest.yaml"
+    if not man_path.is_file():
+        pytest.skip("page-range eval manifest missing")
+    manifest = load_manifest(man_path)
+    golden_file = repo / "tests/fixtures/eval/sample_pdf_text.golden.jsonl"
+    line0 = golden_file.read_text(encoding="utf-8").splitlines()[0].strip()
+    jpath = tmp_path / "rows.jsonl"
+    jpath.write_text(
+        json.dumps({"chunk_index": 0, "record_json": line0}) + "\n",
+        encoding="utf-8",
+    )
+    job = load_job_results_from_jsonl(jpath)
+    res = score_manifest_with_results(manifest, man_path, job, project_root=repo)
+    assert res.error is None
+    assert res.chunks
+    assert res.chunks[0].passed is False
+    assert res.chunks[0].reason == REASON_PAGE_RANGE_UNRESOLVED
+
+
+def test_runner_page_range_db_mode_scores_with_source_pages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    man_path = repo / "tests/fixtures/eval/sample_pdf_text_by_pages.manifest.yaml"
+    if not man_path.is_file():
+        pytest.skip("page-range eval manifest missing")
+    manifest = load_manifest(man_path)
+    golden_file = repo / "tests/fixtures/eval/sample_pdf_text.golden.jsonl"
+    line0 = golden_file.read_text(encoding="utf-8").splitlines()[0].strip()
+
+    row = MagicMock()
+    row.chunk_index = 0
+    row.record_json = line0
+    row.source_pages = "1"
+
+    db_path = tmp_path / "t.db"
+    monkeypatch.setattr("hermes.config.get_db_path", lambda: db_path)
+    monkeypatch.setattr("hermes.db.get_db_path", lambda: db_path)
+
+    from hermes.db import create_job, init_db, save_result
+    from hermes.models import ExtractionResult, FileType, Job, JobStatus
+
+    conn = init_db(db_path)
+    create_job(
+        conn,
+        Job(
+            id="job-pr",
+            file_name="sample_text.pdf",
+            file_type=FileType.PDF_TEXT,
+            page_count=2,
+            has_text_layer=True,
+            schema_class="hermes.schemas.examples.vehicle_fleet:VehicleRecord",
+            status=JobStatus.COMPLETED,
+            total_chunks=1,
+            completed_chunks=1,
+        ),
+    )
+    save_result(
+        conn,
+        ExtractionResult(
+            job_id="job-pr",
+            contract_id=None,
+            chunk_index=0,
+            source_pages="1",
+            record_json=line0,
+            model="m",
+            prompt_version="p",
+        ),
+    )
+    conn.close()
+
+    from hermes.db import get_results_for_job, open_db
+
+    with open_db() as conn:
+        rows = get_results_for_job(conn, "job-pr")
+    job_results = job_results_from_db_rows(rows)
+    assert job_results[0].get("source_pages") == "1"
+    res = score_manifest_with_results(manifest, man_path, job_results, project_root=repo)
+    assert res.error is None
+    assert res.summary is not None
+    assert res.summary.passed_expectations == res.summary.total_expectations
 
 
 def test_runner_load_manifest_or_error_missing(tmp_path: Path) -> None:

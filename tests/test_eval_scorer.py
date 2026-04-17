@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
 
-from hermes.eval.manifest import ChunkExpectation, ChunkLabel, EvalManifest
+from hermes.eval.manifest import ChunkExpectation, ChunkLabel, EvalManifest, PageRange
 from hermes.eval.scorer import (
     REASON_CORRECT_ABSTENTION,
     REASON_FALSE_POSITIVE,
@@ -16,6 +17,7 @@ from hermes.eval.scorer import (
     REASON_MATCH,
     REASON_MISSING_CHUNK_IN_RESULTS,
     REASON_MISSING_OUTPUT,
+    REASON_PAGE_RANGE_AMBIGUOUS,
     REASON_PAGE_RANGE_UNRESOLVED,
     REASON_RECORD_JSON_PARSE_ERROR,
     REASON_SCHEMA_PASS_NO_GOLDEN,
@@ -175,6 +177,71 @@ def test_eval_scorer_page_range_unresolved() -> None:
     assert r.chunks[0].reason == REASON_PAGE_RANGE_UNRESOLVED
 
 
+def test_eval_scorer_page_range_resolves_with_chunk_page_map() -> None:
+    manifest = EvalManifest(
+        fixture_path="x.pdf",
+        schema_ref="ref",
+        addressing="page_range",
+        chunks=[
+            ChunkExpectation(
+                page_range=PageRange(start=1, end=1),
+                label=ChunkLabel.POSITIVE,
+            )
+        ],
+    )
+    job = [
+        {
+            "chunk_index": 0,
+            "record_json": json.dumps([{"k": 1}]),
+            "source_pages": "1",
+        },
+    ]
+    r = score_fixture(manifest, job, None, chunk_page_map={0: (1, 1)})
+    c0 = r.chunks[0]
+    assert c0.passed is True
+    assert c0.resolved_chunk_index == 0
+    assert c0.reason == REASON_SCHEMA_PASS_NO_GOLDEN
+
+
+def test_eval_scorer_page_range_ambiguous() -> None:
+    manifest = EvalManifest(
+        fixture_path="x.pdf",
+        schema_ref="ref",
+        addressing="page_range",
+        chunks=[
+            ChunkExpectation(
+                page_range=PageRange(start=1, end=2),
+                label=ChunkLabel.POSITIVE,
+            )
+        ],
+    )
+    job = [
+        {"chunk_index": 0, "record_json": "[]", "source_pages": "1"},
+        {"chunk_index": 1, "record_json": "[]", "source_pages": "2"},
+    ]
+    r = score_fixture(manifest, job, None, chunk_page_map={0: (1, 1), 1: (2, 2)})
+    assert r.chunks[0].passed is False
+    assert r.chunks[0].reason == REASON_PAGE_RANGE_AMBIGUOUS
+
+
+def test_eval_scorer_page_range_unresolvable_no_candidate() -> None:
+    manifest = EvalManifest(
+        fixture_path="x.pdf",
+        schema_ref="ref",
+        addressing="page_range",
+        chunks=[
+            ChunkExpectation(
+                page_range=PageRange(start=9, end=9),
+                label=ChunkLabel.POSITIVE,
+            )
+        ],
+    )
+    job = [{"chunk_index": 0, "record_json": json.dumps([{"k": 1}]), "source_pages": "1"}]
+    r = score_fixture(manifest, job, None, chunk_page_map={0: (1, 1)})
+    assert r.chunks[0].passed is False
+    assert r.chunks[0].reason == REASON_PAGE_RANGE_UNRESOLVED
+
+
 def test_eval_scorer_golden_file_line(tmp_path: Path) -> None:
     g = tmp_path / "job.golden.jsonl"
     g.write_text(json.dumps({"sku": "A", "qty": 1}) + "\n", encoding="utf-8")
@@ -206,6 +273,102 @@ def test_eval_scorer_golden_parse_error_field_diff(tmp_path: Path) -> None:
     assert r.chunks[0].passed is False
     assert r.chunks[0].reason == REASON_GOLDEN_PARSE_ERROR
     assert r.chunks[0].field_diffs[0].match == "error"
+
+
+def _manifest_anchor(**kwargs: object) -> EvalManifest:
+    base = {
+        "fixture_path": "x.pdf",
+        "schema_ref": "ref",
+        "addressing": "chunk_index",
+        "match_key": "numero_serie",
+        "chunks": [{"chunk_index": 0, "label": "positive"}],
+    }
+    base.update(kwargs)
+    return EvalManifest.model_validate(
+        base,
+        context={"golden_base_dir": Path(__file__).resolve().parents[1]},
+    )
+
+
+def test_eval_scorer_anchor_mode_reorder_invariant() -> None:
+    manifest = _manifest_anchor()
+    gold = [
+        {"numero_serie": "A", "make": "Ford"},
+        {"numero_serie": "B", "make": "GM"},
+    ]
+    shuffled = [gold[1], gold[0]]
+    job = [{"chunk_index": 0, "record_json": json.dumps(shuffled)}]
+    r = score_fixture(manifest, job, {0: gold})
+    assert r.chunks[0].passed is True
+    assert r.chunks[0].reason == REASON_MATCH
+    assert r.summary is not None
+    assert r.summary.records_matched == 2
+    assert r.summary.records_missing == 0
+    assert r.summary.records_extra == 0
+
+
+def test_eval_scorer_anchor_mode_missing_actual_record() -> None:
+    manifest = _manifest_anchor()
+    gold = [
+        {"numero_serie": "A", "make": "Ford"},
+        {"numero_serie": "B", "make": "GM"},
+    ]
+    job = [{"chunk_index": 0, "record_json": json.dumps([gold[0]])}]
+    r = score_fixture(manifest, job, {0: gold})
+    assert r.chunks[0].passed is False
+    assert r.summary is not None
+    assert r.summary.records_matched == 1
+    assert r.summary.records_missing == 1
+    assert r.summary.records_extra == 0
+    assert any(d.match == "missing" for d in r.chunks[0].field_diffs)
+
+
+def test_eval_scorer_anchor_mode_extra_actual_record() -> None:
+    manifest = _manifest_anchor()
+    gold = [{"numero_serie": "A", "make": "Ford"}]
+    actual = [
+        {"numero_serie": "A", "make": "Ford"},
+        {"numero_serie": "X", "make": "Extra"},
+    ]
+    job = [{"chunk_index": 0, "record_json": json.dumps(actual)}]
+    r = score_fixture(manifest, job, {0: gold})
+    assert r.chunks[0].passed is False
+    assert r.summary is not None
+    assert r.summary.records_matched == 1
+    assert r.summary.records_extra == 1
+    assert r.summary.records_missing == 0
+    assert any(d.match == "extra" for d in r.chunks[0].field_diffs)
+
+
+def test_eval_scorer_anchor_mode_duplicate_anchor_warning(caplog: pytest.LogCaptureFixture) -> None:
+    manifest = _manifest_anchor()
+    gold = [
+        {"numero_serie": "SAME", "make": "A"},
+        {"numero_serie": "SAME", "make": "B"},
+    ]
+    actual = [{"numero_serie": "SAME", "make": "A"}]
+    job = [{"chunk_index": 0, "record_json": json.dumps(actual)}]
+    caplog.set_level(logging.WARNING, logger="hermes.eval.scorer")
+    r = score_fixture(manifest, job, {0: gold})
+    assert r.chunks[0].passed is False
+    assert "duplicate anchor" in caplog.text.lower()
+    assert r.summary is not None
+    assert r.summary.records_matched == 1
+    assert r.summary.records_missing == 1
+
+
+def test_eval_scorer_anchor_mode_actual_row_missing_anchor() -> None:
+    manifest = _manifest_anchor()
+    gold = [{"numero_serie": "A", "make": "Ford"}]
+    actual = [{"make": "Ford"}]
+    job = [{"chunk_index": 0, "record_json": json.dumps(actual)}]
+    r = score_fixture(manifest, job, {0: gold})
+    assert r.chunks[0].passed is False
+    assert r.summary is not None
+    assert r.summary.records_matched == 0
+    assert r.summary.records_extra == 1
+    assert r.summary.records_missing == 1
+    assert any(d.match == "extra" for d in r.chunks[0].field_diffs)
 
 
 def test_eval_scorer_negative_false_positive_rate_in_summary() -> None:

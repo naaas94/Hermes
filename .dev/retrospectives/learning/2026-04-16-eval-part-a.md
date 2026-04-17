@@ -1,57 +1,113 @@
 # Learning retrospective — Eval Part A
 
-**Date:** 2026-04-16
-**Plan:** `.dev/eval/eval-plan.md` v0.1
-**Audit:** `.dev/audits/2026-04-16-eval-part-a.md`
+**Original work:** 2026-04-16 · **Remediation & closure:** 2026-04-17  
+**Plan:** `.dev/eval/eval-plan.md` v0.1 → **v0.2.2** (remediation complete; re-audit `pass`)  
+**Audit:** `.dev/audits/2026-04-16-eval-part-a.md` (§1–§8 frozen 2026-04-16; **§9 addendum** 2026-04-17)  
 **Methodology retro:** `.dev/retrospectives/methodology/2026-04-16-eval-part-a.md`
+
+---
 
 ## 1. Task context
 
-Built the first evaluation subsystem for Hermes — manifests for tagging chunks (positive / negative), a pure-function value normalizer, a scorer comparing extraction output against optional golden JSONL, a CLI + pytest runner, two committed frozen fixtures, and the supporting docs. T3 (scorer) and T5 (runner) were architectural tier; the work introduced three patterns that didn't exist in the codebase before — manifest-driven evaluation, schema-agnostic field-level diff, and golden regression. It also forced a four-layer tightening of the production extraction pipeline (T7) to make the eval system measure what it claimed to measure.
+Built the first evaluation subsystem for Hermes — manifests for tagging chunks (positive / negative), a pure-function value normalizer, a scorer comparing extraction output against optional golden JSONL, a CLI + pytest runner, committed frozen fixtures, and supporting docs. T3 (scorer) and T5 (runner) were architectural tier in v0.1. The work introduced patterns that did not exist before: manifest-driven evaluation, schema-agnostic field-level diff, and golden regression. v0.1 execution also forced a four-layer tightening of the production extraction pipeline (**T7**, abstention / false-positive remediation) so the eval system measured what it claimed to measure.
 
-This qualifies for a learning retrospective because eval is a category of code where the **failure mode is silent** — wrong-but-passing is worse than wrong-and-failing — and three of the patterns here will recur in Part B (health metrics, benchmarks). What I get right or wrong here will compound.
+**After the first audit (`fail` on F-02, F-03),** a second planning pass added **v0.2 remediation**: **T8** anchor-based record matching, **T9** page-range resolution via `chunk_page_map` and contained-in policy, **T10** package exports + CLI help + normalizer docstrings (document-only for known normalizer ambiguities). The plan gained **§Plan amendments** (A-1/A-2) for T7 and non-goals, **§R10** post-T8 contract emissions, and **§R11** closure. The audit document’s **§9 addendum** records a **re-audit `pass`** (2026-04-17).
+
+This still qualifies for a learning retrospective because eval is a category of code where **wrong-but-passing is worse than wrong-and-failing**, and the arc from v0.1 ship → adversarial audit → scoped remediation → second pass is itself a lesson in how quality systems fail and recover.
+
+---
 
 ## 2. What I now understand that I didn't before
 
-**Schema-agnostic eval is fundamentally a sequencing problem, not a comparison problem.** The intuition I had at the start was that the hard part of the scorer would be field-level comparison — currency tolerance, date formats, locale. That part turned out to be straightforward (the normalizer is ~250 lines and reads cleanly). The actually hard part is **how you pair records before comparing fields**. The current scorer pairs by list index, which works only when the LLM output is byte-identical to the golden — exactly the case the mocked-LLM regression test exercises and exactly the case live LLM eval will not exercise. F-02 is a direct consequence of treating "compare two lists of records" as a list-zip problem rather than a set-matching-with-anchor problem. The right primitive is: pick a required field from the schema (the "anchor"), join expected and actual on that anchor, then field-diff the matched pairs and report unmatched-on-either-side as separate signals (missing extraction vs hallucinated record). Any future schema-agnostic comparison code should default to "what's the anchor?" before "how do I normalize this field?" The order of those questions matters; I had them backwards.
+**Schema-agnostic eval is fundamentally a sequencing problem, not a comparison problem.** The intuition at the start was that the hard part would be field-level comparison — currency, dates, locale. That part is tractable (~250 lines of normalizer, testable in isolation). The hard part is **how you pair records before comparing fields**. v0.1 paired by list index — fine for mocked-LLM self-replay, wrong for live LLM runs where order drifts (**F-02**). The right primitive is an **anchor**: join expected and actual on a stable field (`match_key` in the manifest), then field-diff matched pairs and surface unpaired rows as first-class signals (`extra`, `missing`, aggregates on `EvalSummary`). **T8 validated** the “anchor before normalize” ordering: the remediation did not rethink tolerance bands; it fixed **matching**.
 
-**A "non-goal" in a plan is a load-bearing fence only if the orchestrator's adversarial pass can prove the deliverable doesn't depend on the fenced surface.** Plan §1 said "Changes to the core extraction pipeline, validator, or repair logic" were non-goals. That fence held until T4 added negative-chunk fixtures and T5 wired up scoring — at which point it became obvious that the validator's `{}` → `[{}]` coercion would make every negative chunk a `false_positive`, which would defeat the eval system's stated purpose. The non-goal was sincere when written and wrong by the time T4 ran. **The lesson is not "non-goals are bad."** The lesson is that non-goals are **claims about coupling** ("the deliverable does not require touching X"), and those claims need adversarial scrutiny in the planning phase the same way scoring rules do. The orchestrator's §5 adversarial pass listed "T3 ↔ pipeline `record_json` serialization" as a coupling but did not list "T3 ↔ validator coercion semantics." A useful planning heuristic: for every scoring rule / decision rule the new system makes, trace backward through the data flow until you reach an existing system behavior and ask whether that behavior is correct *for the new use case*. If you can't answer, the non-goal is suspect.
+**A “non-goal” in a plan is a load-bearing fence only if the adversarial pass can prove the deliverable doesn’t depend on the fenced surface.** Plan §1 originally said no pipeline/validator edits. That fence held until negative-chunk fixtures met validator coercion (`{}` → `[{}]`), which broke abstention scoring. The lesson is not “non-goals are useless” but that non-goals are **falsifiable claims about coupling** — they deserve the same trace-back as scoring rules. **T7 + §Plan amendments A-1/A-2** later made that honest in the plan text; the audit’s F-09 “minor” framing (discovery → decision log, not fake HALT) was right.
 
-**Decision logs are the right artifact for mid-flight discovery; HALT-and-replan is reserved for spec ambiguity.** I had been mentally treating "executor encounters anything outside the original packet" as a HALT trigger. The T7 work was a useful counterexample. The deliverable didn't change; the implementation just had to reach into adjacent code to make the deliverable honest. A decision log captured the rationale, the rejected alternatives, the assumptions, and the deferred items — which is exactly the artifact the next reader needs. HALT-and-replan in this case would have produced a redundant T7 packet and slowed nothing down except shipping. **The discriminator is: does the discovery change what the system is supposed to do, or only how it gets there?** If the former, HALT. If the latter, decision log.
+**Decision logs are the right artifact for mid-flight discovery; HALT-and-replan is for spec ambiguity or contract drift that changes the deliverable.** T7 was the textbook case: same goal, honest measurement required touching adjacent code. **Remediation** added a different rhythm: **T8/T9** had architectural decision logs *before* the code was “surprising,” because policy choices (FIFO duplicate anchors, contained-in page resolution, manifest immutability) were known design forks.
 
-**The auditor's first instinct was wrong, and the way it was wrong is informative.** I (in auditor mode) over-indexed on process violations and called T7 a "major process violation," when the actual majors were the two functional gaps (F-02 record ordering, F-03 page-range dead code). The user's pushback was correct. The pattern: I had a clean process framework loaded and I matched the T7 evidence against it, which produced a finding that was technically correct against the framework but wrong on importance ranking. **The auditor heuristic that would have caught it:** before classifying a process finding as `major`, ask "is there a code defect that would persist after this is documented away?" For F-09, the answer is no — fixing the documentation gap fully resolves it. That makes it minor at most. The same heuristic would correctly leave F-02 and F-03 as major, because no amount of documentation closes the live-LLM ordering gap or makes `page_range` work end-to-end.
+**The auditor’s first instinct can overweight process and underweight function — and the fix is a severity heuristic, not shame.** The original audit correctly elevated **F-02** and **F-03**; it briefly overweighted T7 as process failure until recalibration. **§9** then verified remediation against the same functional bar. **Net:** adversarial review is essential; **ranking** findings by “does this require code to fix user-visible wrongness?” keeps the verdict aligned with reality.
 
-**`pyproject.toml` dependencies are infrastructure decisions even when they look like one-line changes.** Adding PyYAML was the right call (well-vetted, ubiquitous, single-purpose). But the kill criterion was correctly placed: "you must explicitly add this and document it." I was tempted, while building the auditor, to treat the changelog entry as insufficient — but that was wrong; the changelog *is* the documentation. The kill criterion fired exactly as designed. The takeaway: **a fired kill criterion is not a process failure; it is a process success.** The criterion is there so the decision is made consciously, not so it never fires.
+**“Later” in a decision log must become code or an explicit reject — not an eternal defer.** v0.1’s T3 log said the runner would eventually resolve `page_range`; v0.1 runner didn’t. That handoff created **F-03**. **T9** closed it by implementing resolution in the scorer with a **`chunk_page_map`** supplied by the runner, **without** mutating the manifest — and **superseded** the T3 log line in writing. That pattern — **chain integrity in logs** — matters when the same codebase is touched months apart.
+
+**Documentation-only remediation for ambiguous normalizers can be the right scope.** T10 did not “fix” F-01/F-05/F-06 behavior; it documented inverse-function ambiguity (percent, dates, near-zero tolerance) and pointed authors at **`field_type_hint`**. For a v0.2 bump whose contract was “don’t silently change lenient defaults without a product decision,” that was consistent — and the plan’s §R1 non-goals explicitly excluded behavior churn.
+
+**Implementation emits contracts the plan didn’t list until §R10.** Examples: `golden_base_dir` resolution for manifest validation when `match_key` is set; direct `EvalManifest(...)` construction requiring validation context; reason-code refinement under anchor mode when the LLM returns `[]` on a positive chunk. **Learning:** when Pydantic validation context becomes load-bearing, treat it like a public API and record it beside the plan, not only in code.
+
+---
 
 ## 3. Decisions I made and would make again
 
-- **Splitting T1 (manifest) and T2 (normalizer) as parallel root tasks.** They have no shared types and the test surfaces are unrelated. The temptation was to fold normalization into the scorer (T3) since that's the only consumer. Keeping it separate paid back: the normalizer is now reusable for any future field-comparison work (Part B health metrics will likely want it), and it could be tested in isolation without scorer scaffolding. **Generalizable principle:** if a candidate utility module has even one reasonable second consumer, separate it from its first consumer at planning time, not after.
-- **Designing the scorer's `job_results` parameter as `list[dict]` rather than as DB rows or JSONL paths.** The scorer takes pre-parsed rows; the runner handles sourcing (DB / JSONL / pre-computed). This kept T3 a pure function of (manifest, results, goldens) — testable without the database, without the LLM, without file I/O. The decision log for T3 noted this explicitly. Cost: one more function in the runner (`job_results_from_db_rows`). Benefit: the scorer's tests are fast and complete. **Principle:** push I/O to the edges; let the core logic be a pure function. Standard advice; worth re-confirming.
-- **`force_new_job=True` in the runner's pipeline mode (T5 decision log).** Easy to miss but important — without it, `hermes eval` would silently reuse a prior completed job's results, defeating the purpose of running the eval. Caught at planning time, captured in the decision log. **Principle:** when wiring an existing system into a new mode of use, audit every "convenience" feature (dedup, caching, reuse) for whether it makes sense in the new context.
-- **Mocked-LLM regression test as the CI path, with live-LLM eval as the local/nightly path.** The right separation. CI shouldn't depend on an API key; eval against a real LLM shouldn't be coerced into determinism it doesn't have. **Principle:** if a system has a deterministic mode and a non-deterministic mode, never run the non-deterministic mode in CI; instead, find the largest piece of the deterministic mode that exercises the contract you actually care about.
+- **Splitting T1 and T2 as parallel roots; scorer consuming both.** Keeps normalization reusable (Part B will care) and tests small.
+
+- **Scorer `job_results` as `list[dict]`; I/O at runner edge.** Keeps T3 testable without DB/LLM.
+
+- **`force_new_job=True` in pipeline eval mode (T5).** Prevents silent dedup reuse from defeating eval runs.
+
+- **Mocked-LLM regression for CI, live LLM for local/nightly.** Preserves CI determinism.
+
+- **v0.2: anchor matching with optional `match_key` and backward-compatible index path when unset.** Pragmatic: old manifests behave as v0.1; committed fixtures set `match_key` so CI exercises the real fix.
+
+- **v0.2: contained-in page-range resolution + ambiguous vs unresolved reasons.** More robust than exact-coverage-only for real PDF chunk geometry.
+
+- **v0.2: multiset FIFO + one WARNING per duplicate anchor value.** Rejects “fail the manifest on duplicates” while still making duplicates visible in logs.
+
+- **v0.2: plan amendments + versioned plan (0.2, 0.2.1, 0.2.2) instead of silent edits to v0.1 narrative.** Preserves post-mortem diffability while closing F-09 traceability.
+
+- **Parallel remediation subtasks (T8, T9, T10) with explicit merge hazards in the plan.** Small merge cost; clean audit trail.
+
+---
 
 ## 4. Decisions I made that I would change
 
-- **Pairing records by list index in the scorer.** The single most important miscalibration. I treated `_field_diffs_for_records` as a list-zip problem and wrote a clean three-line `for i in range(n)` loop. It was only when stress-testing the scorer in adversarial mode that the live-LLM ordering implication landed. **The underlying error was framing:** I was thinking about "how do I compare two records" when the real question was "how do I match two records." The better decision rule: when designing any "compare two collections" function, write down the matching rule before the comparison rule. If matching is by index, justify why ordering is guaranteed. If you can't justify, matching is by anchor field.
-- **Accepting `page_range` addressing in the manifest without implementing the resolver.** The `addressing: page_range` mode was a "design for the future" call: support it in the model now, resolve it later. In retrospect this is the wrong instinct for a small system — having the manifest accept a syntactic feature that the runner cannot service end-to-end is worse than not supporting it at all (silent `page_range_unresolved` failures vs. a clear "not yet supported" error at load time). **The underlying error:** mistaking "the model supports this" for "the system supports this." For a 6-subtask plan with no obvious near-term consumer of page-range manifests, the right call was either implement it fully or reject it at the manifest layer. The "designed for extensibility" framing was premature.
-- **Not adding a "Plan amendments" section to the eval plan when T7 happened.** The decision log captured the rationale fully, but the plan itself still reads as if T7 never happened. A one-paragraph amendment would have closed the gap and made the audit shorter. **Underlying error:** treating the plan as immutable after the orchestrator phase. Plans should be amendable; they just shouldn't be silently rewritten.
-- **Auditor over-indexing on process findings (first pass).** Discussed above in §2. The fix is the heuristic ("does fixing this require code or only docs?") and applying it before classifying severity.
+- **Pairing records by list index in v0.1.** Already dissected in the first retro: match rule should precede comparison rule. **Mitigated in v0.2** when `match_key` is set; **residual (A-01):** multi-record goldens without `match_key` remain order-sensitive — acceptable if documented and rare.
+
+- **Accepting `page_range` in the manifest before the runner could resolve it.** “Model supports it” fooled me into thinking “system supports it.” **Closed in T9**; would still prefer earlier either/or: implement resolution or reject at load — v0.1 split the worst outcome (silent unresolved).
+
+- **Not amending the plan immediately when T7 landed.** v0.2’s §Plan amendments fix this retroactively; the error was treating the plan as immutable after orchestration.
+
+- **Auditor over-weighting process on the first pass.** Recalibrated; **§9** stayed focused on functional closure.
+
+- **Potential under-spec of post-T8 ergonomics until §R10.** If I did it again, I’d budget one “contract emission” pass after the first architectural subtask in aRemediation chain, so E-1/E-2/E-3 land with the code, not as a patch bump.
+
+---
 
 ## 5. Patterns in my own thinking
 
-- **I default to clean separations and pure functions, sometimes at the cost of usefulness.** The `score_fixture(manifest, list[dict], goldens)` signature is beautiful — but it pushes the entire "match records by anchor" problem out to the caller, which never picks it up. A scorer that took (manifest, list[dict], goldens, *, anchor_field=None) and matched by anchor when provided would have been less pure but more useful. The "cleanness reflex" needs a counter-balance: "would this clean separation actually be used by a less-disciplined caller?" If not, fold the dirty work back in.
-- **I write extensible models before I have a second use case.** `addressing: chunk_index | page_range | mixed` was designed for fixtures we don't have. The chunker stability assumption (load-bearing #4) means even `chunk_index` is fragile across chunker tuning changes — `page_range` was supposed to be the durable alias, but it's not implemented. Writing the model without writing the resolver was a tax I paid because I anticipated a future use that hasn't materialized. The pattern: **don't design for a second use case until you have one.** This is YAGNI rephrased; I keep needing to relearn it.
-- **I trust the orchestrator's adversarial pass more than I should.** §5 of the eval plan listed three rejected alternatives, four load-bearing assumptions, the highest-risk subtask, and four hidden couplings. It missed the one coupling that actually mattered (T3 ↔ validator coercion). The plan was correct as far as it went; the failure mode was incompleteness, not incorrectness. The takeaway: an adversarial pass that surfaces *some* couplings is valuable, but its absence of a finding does not mean absence of risk. I should have applied my own adversarial scrutiny to the scoring rules table at planning time, not at audit time. **The heuristic I want to internalize:** "trace each rule the new system enforces back to the upstream behavior that supplies its input. If the upstream behavior is in scope, verify it. If it's out of scope, mark it as an assumption and surface it."
-- **I sometimes confuse process correctness with output quality, in both directions.** As auditor, I almost shipped a verdict where two `major` process findings sat alongside the two genuine functional gaps, equating them. As planner, I had treated "non-goal: don't touch the validator" as a binding constraint when it should have been a hypothesis. Both directions are the same error: treating a process artifact (the audit verdict, the non-goal list) as if it were the territory rather than the map.
+- **Clean separation vs. usefulness.** Pure `score_fixture` was elegant; v0.1 pushed matching policy too far down the stack. T8 pulled matching back into the scorer where manifest-level `match_key` belongs — a better balance.
+
+- **Extensible models before a second use case.** `page_range` before resolution was YAGNI debt; remediation paid it down deliberately.
+
+- **Trusting the adversarial pass completely.** v0.1 §5 missed validator ↔ negative-chunk coupling; the lesson stands: **trace each rule to upstream behavior**, even outside the “eval” package.
+
+- **Confusing map and territory.** Process artifacts (verdicts, non-goals) vs. code behavior — same meta-error as before; remediation trained checking §9 against running tests, not only documents.
+
+- **Satisfaction after `pass`.** Closure is a milestone, not proof there are no more edge cases (A-01–A-04 residuals). Guard against complacency on resume, golden round-trip, extra-field detection.
+
+---
 
 ## 6. Open questions
 
-- **What's the right primitive for schema-agnostic record matching?** Anchor-by-required-field is the obvious starting point, but Pydantic models can have multiple required fields, optional anchors (e.g. `vin OR (make + model + year)`), or none at all. Is there a generic "best join key" extraction from a Pydantic v2 model? Worth a small spike before extending the scorer.
-- **How do you write deterministic-enough fixtures for live-LLM eval to be meaningful?** The mocked-LLM regression test sidesteps this but doesn't answer it. If the eventual goal is `hermes eval` against a real provider in nightly CI, the goldens have to be tolerant of the model's stylistic variation while still catching real regressions. The normalizer's lenient defaults are a partial answer; record-matching by anchor is another. The full answer probably involves running the same fixture N times and computing per-run variance to set tolerance bands. Worth studying.
-- **Where does the "behavioral contract" sit in a plan structure?** The eval system depends on `record_json` semantics, `validation_passed` semantics, and `extraction_results` row semantics — none of which are types or interfaces, but all of which are load-bearing. Plan §2's contracts schema only has slots for types/interfaces, error envelopes, naming, logging, tests. Does adding a "behavioral contracts" row generalize, or is this an eval-specific need? Watch the next task.
-- **At what point does the scorer need to merge with a more general "compare two structured-data collections" library?** This is currently 587 lines in `scorer.py`. If Part B's health-metrics work needs similar functionality, there will be pressure to factor out. Resist until the second use case actually exists; track the impulse.
-- **What's the right way to surface "this addressing mode isn't fully wired" at the manifest layer?** Generalizes beyond eval — any system with model fields that the runtime can't service has the same problem. Pydantic validators? Feature flags in the type? Reject at load time? Worth a small think.
+- **Generic anchor inference** when a schema has no single required field, or composite keys — `match_key` is manual; is introspection or Hungarian fallback worth it on demand?
+
+- **Deterministic live-LLM eval:** variance across runs, tolerance bands, multi-sample aggregation — still open for nightly jobs.
+
+- **Where behavioral contracts live** in plans (`record_json`, `validation_passed`, `source_pages`) — Part A now has A-1 and §R10; does a template row for “implicit persistence contracts” generalize?
+
+- **Factoring `scorer.py`** when Part B needs similar comparison — still “resist until second use case,” but file size is a signal.
+
+- **`resume_pipeline` + eval (A-04)** — still not directly integration-tested; revisit if resume semantics change.
+
+---
 
 ## 7. Single paragraph synthesis
 
-The most important thing this task taught me is that **eval code's distinguishing failure mode is wrong-but-passing**, and that the structural defenses against wrong-but-passing are not in the comparison logic — they're in the matching logic, the contract surface to upstream behavior, and the discipline of treating "non-goal" as a falsifiable claim rather than a fence. The scorer's prettiest code (`_field_diffs_for_records`) is the code most likely to silently lie to a real user; the plan's most confident section (§1 non-goals) is the section that quietly stopped being true the moment T4 added negative chunks. Both are the same kind of error: trusting the framing past the point where the framing earned that trust. Six months from now, the thing I want to remember is: **for any system whose job is to detect lies, check that it is not telling its own.**
+The deepest lesson of Part A eval is that **systems whose job is to catch regressions can themselves regress invisibly** — v0.1 had crisp comparison code and a blind spot in **record matching** and **page-range handoffs**, which the first audit surfaced as major functional gaps, not style issues. **Remediation** confirmed the fix wasn’t “more tests of the same mock,” but **explicit matching policy** (anchors, duplicates, aggregates) and **wiring deferred seams** (`chunk_page_map`, contained-in resolution, decision-log supersession). **Plans must absorb discoveries** (T7 amendments, v0.2 deltas, §R10 emissions) so the next reader doesn’t mistake old non-goals for current truth. Six months out, remember: **for anything that claims to measure truth, validate the measurement path end-to-end — including order, pages, and the code that shapes the JSON before the scorer runs — and when an audit fails, prioritize the user-visible gap over the paperwork gap.**
+
+---
+
+## Document history
+
+| Version | Date | Notes |
+|---------|------|-------|
+| 1 | 2026-04-16 | Initial learning retro (v0.1 + audit §1–§8). |
+| 2 | 2026-04-17 | Updated for v0.2 remediation (T8–T10), plan v0.2.2, audit §9 re-audit `pass`, closure residuals A-01–A-04. |
