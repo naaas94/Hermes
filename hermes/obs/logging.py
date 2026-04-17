@@ -11,15 +11,21 @@ from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Final
 
 from hermes.config import HermesConfig, get_storage_base
 from hermes.obs.schema import CURRENT_LOG_SCHEMA_VERSION, HermesObsExtraRequired
 
+_structlog: ModuleType | None
 try:
-    import structlog
+    import structlog as _structlog_mod
 except ImportError:
-    structlog = None  # type: ignore[assignment]
+    _structlog = None
+else:
+    _structlog = _structlog_mod
+
+structlog = _structlog
 
 _HAVE_STRUCTLOG: Final[bool] = structlog is not None
 

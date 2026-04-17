@@ -143,8 +143,12 @@ def _rusage_peak_rss_bytes() -> int:
         import resource
     except ImportError:
         return 0
+    getrusage = getattr(resource, "getrusage", None)
+    rusage_self = getattr(resource, "RUSAGE_SELF", None)
+    if getrusage is None or rusage_self is None:
+        return 0
     try:
-        u = resource.getrusage(resource.RUSAGE_SELF)  # type: ignore[attr-defined]
+        u = getrusage(rusage_self)
         if sys.platform == "darwin":
             return max(0, int(u.ru_maxrss))
         return max(0, int(u.ru_maxrss) * 1024)

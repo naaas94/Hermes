@@ -9,6 +9,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from types import ModuleType
 from typing import Any
 
 from hermes.obs.schema import (
@@ -19,10 +20,15 @@ from hermes.obs.schema import (
     StageStartEvent,
 )
 
+_psutil: ModuleType | None
 try:
-    import psutil
+    import psutil as _psutil_mod
 except ImportError:
-    psutil = None
+    _psutil = None
+else:
+    _psutil = _psutil_mod
+
+psutil = _psutil
 
 _PSUTIL_UNAVAILABLE_WARNED: bool = False
 
