@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+
 import pytest
 
 from hermes.obs.schema import (

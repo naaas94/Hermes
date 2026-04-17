@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +16,7 @@ from hermes.eval.scorer import EvalResult, score_fixture
 logger = logging.getLogger("hermes.eval.runner")
 
 
-class ResultsMode(str, Enum):
+class ResultsMode(StrEnum):
     """How job results are obtained for scoring."""
 
     PIPELINE = "pipeline"

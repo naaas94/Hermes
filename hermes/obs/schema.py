@@ -147,7 +147,7 @@ class BaseEvent(BaseModel):
         "for v1 events.",
     )
     ts: str = Field(..., description="ISO8601 timestamp in UTC (with Z or explicit offset).")
-    event: str
+    event: EventName
     job_id: str | None = None
     trace_id: str | None = Field(
         default=None,
