@@ -58,11 +58,21 @@ class ExtractionConfig:
 
 
 @dataclass(frozen=True)
+class ObservabilityConfig:
+    """Part B observability: structured logs and optional NDJSON under storage."""
+
+    log_format: str = "console"
+    log_dir: str = "logs"
+    log_ndjson: bool = False
+
+
+@dataclass(frozen=True)
 class HermesConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     normalization: NormalizationConfig = field(default_factory=NormalizationConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
 
 _CONFIG_SEARCH_PATHS = [
@@ -114,7 +124,20 @@ def _parse_config(raw: dict[str, Any]) -> HermesConfig:
     }
     ext_cfg = ExtractionConfig(**ext_fields)
 
-    return HermesConfig(llm=llm_cfg, normalization=norm_cfg, storage=stor_cfg, extraction=ext_cfg)
+    obs_raw = raw.get("observability", {})
+    obs_fields = {
+        k: v for k, v in obs_raw.items()
+        if k in ObservabilityConfig.__dataclass_fields__
+    }
+    obs_cfg = ObservabilityConfig(**obs_fields)
+
+    return HermesConfig(
+        llm=llm_cfg,
+        normalization=norm_cfg,
+        storage=stor_cfg,
+        extraction=ext_cfg,
+        observability=obs_cfg,
+    )
 
 
 @functools.lru_cache(maxsize=1)

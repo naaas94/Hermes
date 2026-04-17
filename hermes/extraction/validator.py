@@ -53,6 +53,8 @@ def parse_json_array(text: str) -> list[dict[str, Any]]:
         for key in _ARRAY_WRAPPER_KEYS:
             if key in parsed and isinstance(parsed[key], list):
                 return cast(list[dict[str, Any]], parsed[key])
+        if not parsed or all(v is None for v in parsed.values()):
+            return []
         return [cast(dict[str, Any], parsed)]
     raise ValueError(f"Expected JSON array or object, got {type(parsed).__name__}")
 
@@ -85,6 +87,15 @@ def validate_records(
     return valid, invalid, error_msg
 
 
+def _is_all_null_dump(model: BaseModel) -> bool:
+    """True when every field in the model dump is None (defense against null-only rows)."""
+    return all(v is None for v in model.model_dump(mode="python").values())
+
+
+def _drop_all_null_validated(models: list[BaseModel]) -> list[BaseModel]:
+    return [m for m in models if not _is_all_null_dump(m)]
+
+
 def validate_with_repair(
     llm_response: LLMResponse,
     schema_class: type[BaseModel],
@@ -105,6 +116,12 @@ def validate_with_repair(
     while attempt <= max_retries:
         result.attempts = attempt + 1
         valid, invalid, error = validate_records(current_text, schema_class)
+        valid = _drop_all_null_validated(valid)
+
+        # Parsed ``[]`` — no rows to validate; treat as successful empty extraction.
+        if not valid and not invalid and not error:
+            result.validated = []
+            return result
 
         if valid and not invalid and not error:
             result.validated = valid

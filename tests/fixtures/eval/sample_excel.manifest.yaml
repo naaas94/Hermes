@@ -1,0 +1,13 @@
+fixture_path: tests/fixtures/eval/sample.xlsx
+schema_ref: hermes.schemas.examples.vehicle_fleet:VehicleRecord
+addressing: chunk_index
+golden_path: tests/fixtures/eval/sample_excel.golden.jsonl
+modality: excel
+notes: >
+  Two sheets: Vehicles (chunk 0, positive) and Boilerplate (chunk 1, negative). Chunking
+  splits sheets so the negative chunk is scored separately (abstention / false-positive rate).
+chunks:
+  - chunk_index: 0
+    label: positive
+  - chunk_index: 1
+    label: negative

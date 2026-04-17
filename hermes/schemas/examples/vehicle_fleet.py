@@ -7,7 +7,7 @@ class VehicleRecord(BaseModel):
     marca: str | None = None
     descripcion: str | None = None
     modelo: int | None = None
-    numero_serie: str | None = None
+    numero_serie: str
     tipo_vehiculo: str | None = None
     cobertura: str | None = None
     suma_asegurada: float | None = None

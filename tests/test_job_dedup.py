@@ -15,8 +15,9 @@ from hermes.models import Chunk, LLMResponse
 
 @pytest.fixture()
 def mock_llm_response():
+    # Minimal valid VehicleRecord (numero_serie is required).
     return LLMResponse(
-        content=json.dumps([{"id": 1, "name": "x"}]),
+        content=json.dumps([{"numero_serie": "JTDS4RCE1P0000001"}]),
         model="qwen3:4b",
         tokens_in=10,
         tokens_out=10,

@@ -40,6 +40,8 @@ def test_json_schema_generation():
     schema = get_json_schema(cls)
     assert "properties" in schema
     assert "marca" in schema["properties"]
+    assert "numero_serie" in schema["properties"]
+    assert "numero_serie" in schema.get("required", [])
 
 
 def test_load_empty_model():

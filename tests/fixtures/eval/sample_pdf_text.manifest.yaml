@@ -1,0 +1,12 @@
+fixture_path: tests/fixtures/eval/sample_text.pdf
+schema_ref: hermes.schemas.examples.vehicle_fleet:VehicleRecord
+addressing: chunk_index
+golden_path: tests/fixtures/eval/sample_pdf_text.golden.jsonl
+modality: pdf
+notes: >
+  Page 1 is vehicle slips (chunk 0, positive); page 2 is boilerplate only (chunk 1, negative).
+chunks:
+  - chunk_index: 0
+    label: positive
+  - chunk_index: 1
+    label: negative

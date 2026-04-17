@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import csv
 import json
-import logging
 import shutil
 import sqlite3
 import sys
@@ -17,6 +16,8 @@ from rich.console import Console
 from rich.table import Table
 
 from hermes import __version__
+from hermes.config import load_config
+from hermes.obs.logging import configure_logging
 
 app = typer.Typer(
     name="hermes",
@@ -34,10 +35,7 @@ def main(
         False, "--verbose", "-v", help="Enable debug logging."
     ),
 ) -> None:
-    level = logging.DEBUG if verbose else logging.WARNING
-    logging.basicConfig(
-        level=level, format="%(name)s %(levelname)s: %(message)s"
-    )
+    configure_logging(load_config(), verbose=verbose)
 
 
 def app_entry() -> None:
@@ -171,7 +169,7 @@ def test(
     from hermes.db import get_llm_runs_for_job, get_stages_for_job, open_db
     from hermes.extraction.pipeline import run_pipeline
 
-    excel_file = Path("test_excel_accuracy_synthetic.xlsx")
+    excel_file = Path("test_excel_stress_synthetic.xlsx")
     pdf_file = Path("test_pdf_stress_riscbac.pdf")
 
     if not excel_file.exists() or not pdf_file.exists():
@@ -197,8 +195,8 @@ def test(
 
     jobs: list[tuple[str, str, float]] = []
 
-    # ── Test 1: Excel Accuracy ────────────────────────────────────────
-    console.rule("[bold cyan]Test 1: Excel Accuracy & Stream Extraction[/bold cyan]")
+    # ── Test 1: Excel stress ──────────────────────────────────────────
+    console.rule("[bold cyan]Test 1: Excel Stress & Stream Extraction[/bold cyan]")
     start = time.perf_counter()
     try:
         job_id = run_pipeline(
@@ -207,7 +205,7 @@ def test(
             max_workers=workers,
             force_new_job=force,
         )
-        jobs.append(("Excel Accuracy", job_id, time.perf_counter() - start))
+        jobs.append(("Excel Stress", job_id, time.perf_counter() - start))
     except Exception as e:
         console.print(f"[red]Excel test failed:[/red] {e}")
 
@@ -655,6 +653,265 @@ def init() -> None:
         pass
     console.print("[green]Database initialized.[/green]")
     console.print("[bold]Hermes is ready.[/bold]")
+
+
+@app.command("eval")
+def eval_cli(
+    fixture_dir: Path = typer.Option(
+        Path("tests/fixtures/eval"),
+        "--fixture-dir",
+        help="Directory containing *.manifest.yaml fixtures.",
+    ),
+    manifest: Path | None = typer.Option(
+        None,
+        "--manifest",
+        help="Run a single manifest instead of all in --fixture-dir.",
+    ),
+    from_results: str = typer.Option(
+        "",
+        "--from-results",
+        help="Score an existing job's DB results (requires --manifest).",
+    ),
+    from_jsonl: Path | None = typer.Option(
+        None,
+        "--from-jsonl",
+        help="Score job rows from a JSONL file (requires --manifest).",
+    ),
+    update_goldens: bool = typer.Option(
+        False,
+        "--update-goldens",
+        help="Overwrite golden baselines from current outputs (requires --yes or confirm).",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation for --update-goldens.",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write eval results JSON to this file.",
+    ),
+    model: str = typer.Option("", "--model", "-m", help="Override LLM model for pipeline runs."),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print per-chunk field-level diffs.",
+    ),
+) -> None:
+    """Run eval manifests: extract (or load results), score against goldens, print summary."""
+    from hermes.eval.runner import (
+        ResultsMode,
+        discover_manifest_paths,
+        eval_outcomes_ok,
+        outcomes_to_json_blob,
+        run_eval_suite,
+    )
+
+    root = Path.cwd()
+    fd = fixture_dir if fixture_dir.is_absolute() else (root / fixture_dir).resolve()
+
+    if manifest is not None:
+        mpaths = [manifest if manifest.is_absolute() else (root / manifest).resolve()]
+    else:
+        mpaths = discover_manifest_paths(fd)
+
+    if not mpaths:
+        console.print(f"[red]No eval manifests found under[/red] {fd}")
+        raise typer.Exit(1)
+
+    fr = from_results.strip()
+    if fr and from_jsonl is not None:
+        console.print("[red]Use only one of --from-results or --from-jsonl.[/red]")
+        raise typer.Exit(1)
+
+    if fr:
+        mode = ResultsMode.FROM_JOB
+        jid = fr
+        jl: Path | None = None
+    elif from_jsonl is not None:
+        mode = ResultsMode.FROM_JSONL
+        jid = None
+        jl = from_jsonl if from_jsonl.is_absolute() else (root / from_jsonl).resolve()
+    else:
+        mode = ResultsMode.PIPELINE
+        jid = None
+        jl = None
+
+    if mode in (ResultsMode.FROM_JOB, ResultsMode.FROM_JSONL) and manifest is None:
+        console.print("[red]--manifest is required with --from-results or --from-jsonl.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        outcomes = run_eval_suite(
+            manifest_paths=mpaths,
+            project_root=root,
+            results_mode=mode,
+            job_id=jid,
+            jsonl_path=jl,
+            model_override=model or None,
+            update_goldens=update_goldens,
+            skip_update_confirm=yes,
+            confirm_fn=(lambda m: typer.confirm(m, default=False))
+            if update_goldens and not yes
+            else None,
+        )
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    table = Table(title="Hermes eval", show_edge=False)
+    table.add_column("Manifest", style="bold")
+    table.add_column("Fixture")
+    table.add_column("Job")
+    table.add_column("Pass", justify="center")
+    table.add_column("Pos", justify="right")
+    table.add_column("Neg FPR", justify="right")
+    table.add_column("Field acc", justify="right")
+    table.add_column("Error")
+
+    for o in outcomes:
+        mp_short = str(o.manifest_path)
+        fix_s = str(o.fixture_resolved) if o.fixture_resolved else "-"
+        job_s = o.job_id or "-"
+        err_s = o.result.error or ""
+        if o.result.summary is None:
+            pr = "-"
+            pos_s = "-"
+            fpr = "-"
+            facc = "-"
+        else:
+            s = o.result.summary
+            pr = (
+                "[green]yes[/green]"
+                if s.passed_expectations == s.total_expectations
+                else "[red]no[/red]"
+            )
+            pos_s = f"{s.positive_passed}/{s.positive_total}"
+            fpr = (
+                "-"
+                if s.negative_false_positive_rate is None
+                else f"{s.negative_false_positive_rate:.3f}"
+            )
+            facc = (
+                "-"
+                if s.field_level_accuracy is None
+                else f"{s.field_level_accuracy:.4f}"
+            )
+        err_cell = err_s[:60] + ("…" if len(err_s) > 60 else "")
+        table.add_row(mp_short, fix_s, job_s, pr, pos_s, fpr, facc, err_cell)
+
+    console.print(table)
+
+    if verbose:
+        for o in outcomes:
+            if o.result.error:
+                continue
+            console.print(f"\n[bold]{o.manifest_path}[/bold]")
+            for ch in o.result.chunks:
+                console.print(
+                    f"  chunk manifest#{ch.manifest_chunk_index} "
+                    f"resolved={ch.resolved_chunk_index} label={ch.label} "
+                    f"passed={ch.passed} reason={ch.reason}"
+                )
+                for field_diff in ch.field_diffs:
+                    console.print(
+                        f"    {field_diff.field}: match={field_diff.match} "
+                        f"expected={field_diff.expected!r} actual={field_diff.actual!r}"
+                    )
+
+    if output is not None:
+        out_path = output if output.is_absolute() else (root / output)
+        out_path.write_text(
+            json.dumps(outcomes_to_json_blob(outcomes), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        console.print(f"[green]Wrote[/green] {out_path}")
+
+    raise typer.Exit(0 if eval_outcomes_ok(outcomes) else 1)
+
+
+@app.command()
+def bench(
+    output_dir: Path = typer.Option(
+        Path("benchmarks"),
+        "--output",
+        "-o",
+        help="Directory for JSON (and optional CSV) benchmark summaries.",
+    ),
+    mock_llm: bool = typer.Option(
+        False,
+        "--mock-llm",
+        help=(
+            "Use the integration-test stub LLM (CI-friendly; "
+            "not representative of prod throughput)."
+        ),
+    ),
+    model: str = typer.Option(
+        "qwen3:4b",
+        "--model",
+        "-m",
+        help="Model override applied to every workload.",
+    ),
+    workers: int = typer.Option(
+        1,
+        "--workers",
+        "-w",
+        help="Concurrency override applied to every workload.",
+    ),
+    write_csv: bool = typer.Option(
+        False,
+        "--csv",
+        help="Also write a CSV file next to the JSON summary.",
+    ),
+    include_large: bool = typer.Option(
+        False,
+        "--include-large",
+        help="Include repo-root stress PDF when test_pdf_stress_riscbac.pdf exists.",
+    ),
+    log_format_compare: bool | None = typer.Option(
+        None,
+        "--log-format-compare/--no-log-format-compare",
+        help=(
+            "Run each workload twice (console + JSON NDJSON) when structlog is installed; "
+            "omit both flags to use per-workload defaults (compare on pdf_text_small only)."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Verbose logging after the run.",
+    ),
+) -> None:
+    """Run standard benchmark workloads and write JSON/CSV summaries under benchmarks/."""
+    from hermes.bench.runner import run_bench
+    from hermes.bench.workloads import default_workloads, resolve_repo_root
+
+    root = resolve_repo_root()
+    workloads = default_workloads(root, include_large_pdf=include_large)
+    out = output_dir if output_dir.is_absolute() else (Path.cwd() / output_dir).resolve()
+    summary = run_bench(
+        workloads,
+        out,
+        model,
+        workers,
+        mock_llm=mock_llm,
+        log_format_compare=log_format_compare,
+        write_csv=write_csv,
+        project_root=root,
+    )
+    cfg = load_config()
+    configure_logging(cfg, verbose=verbose)
+    if summary.dual_sink_regression:
+        console.print(
+            "[yellow]bench.dualsink.regression: dual-sink wall-time overhead "
+            ">10% on pdf_text_small (see NDJSON / logs).[/yellow]"
+        )
+    raise typer.Exit(1 if summary.dual_sink_regression else 0)
 
 
 @app.command()
