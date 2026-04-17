@@ -19,3 +19,4 @@ build/
 tests/fixtures/*
 !tests/fixtures/eval/
 !tests/fixtures/eval/**
+tests/fixtures/

@@ -31,3 +31,10 @@ base_path = "~/.hermes/storage"
 default_schema = "hermes.schemas.examples.generic_table:GenericRow"
 chunk_overlap_ratio = 0.1       # 10% overlap between chunks
 tiktoken_encoding = "cl100k_base"  # used when optional [tiktoken] extra is installed
+
+[observability]
+log_format = "console"          # "console" or "json" (JSON NDJSON needs pip install -e ".[obs]")
+log_dir = "logs"                # NDJSON path is relative to storage base unless absolute
+log_ndjson = false              # append NDJSON when true; often used with log_format
+rss_sampling_enabled = true     # RSS events at stage boundaries (needs psutil for bytes)
+rss_sampling_interval_s = 0.0   # >0 enables periodic samples during normalization only; 0 = boundaries only

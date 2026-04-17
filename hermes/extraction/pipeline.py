@@ -243,7 +243,7 @@ def _resume_pipeline_inner(
         base_failed = job.failed_chunks
 
         obs_log = get_logger("hermes.obs.sampling")
-        _rss_on = getattr(cfg.observability, "rss_sampling_enabled", True)
+        _rss_on = cfg.observability.rss_sampling_enabled
 
         with bind_job(job_id):
             with stage_timer(
@@ -420,8 +420,8 @@ def _run_pipeline_inner(
 
         job_id = uuid.uuid4().hex[:12]
         obs_log = get_logger("hermes.obs.sampling")
-        _rss_on = getattr(cfg.observability, "rss_sampling_enabled", True)
-        _norm_iv = float(getattr(cfg.observability, "rss_sampling_interval_s", 0) or 0)
+        _rss_on = cfg.observability.rss_sampling_enabled
+        _norm_iv = float(cfg.observability.rss_sampling_interval_s or 0)
 
         # 1. Preflight
         console.print(f"[bold]Preflight:[/bold] {file_path.name}")

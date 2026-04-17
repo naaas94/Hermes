@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 import yaml
 from pydantic import ValidationError
 
-from hermes.eval.manifest import ChunkExpectation, ChunkLabel, load_manifest
+from hermes.eval.manifest import ChunkExpectation, ChunkLabel, infer_golden_base_dir, load_manifest
 
 
 def _write(tmp: Path, name: str, content: str) -> Path:
@@ -180,6 +181,77 @@ chunks: []
     )
     with pytest.raises(ValidationError):
         load_manifest(path)
+
+
+def test_manifest_loads_match_key(tmp_path: Path) -> None:
+    g = tmp_path / "t.golden.jsonl"
+    g.write_text(
+        json.dumps([{"numero_serie": "VIN1", "make": "Ford"}]) + "\n[]\n",
+        encoding="utf-8",
+    )
+    path = _write(
+        tmp_path,
+        "f.manifest.yaml",
+        f"""
+fixture_path: x.xlsx
+schema_ref: hermes.schemas.examples.vehicle_fleet:VehicleRecord
+addressing: chunk_index
+match_key: numero_serie
+golden_path: {g.name}
+chunks:
+  - chunk_index: 0
+    label: positive
+  - chunk_index: 1
+    label: negative
+""",
+    )
+    m = load_manifest(path)
+    assert m.match_key == "numero_serie"
+
+
+def test_manifest_rejects_match_key_missing_in_golden_row(tmp_path: Path) -> None:
+    g = tmp_path / "t.golden.jsonl"
+    g.write_text(json.dumps([{"make": "Ford"}]) + "\n[]\n", encoding="utf-8")
+    path = _write(
+        tmp_path,
+        "f.manifest.yaml",
+        f"""
+fixture_path: x.xlsx
+schema_ref: hermes.schemas.examples.vehicle_fleet:VehicleRecord
+addressing: chunk_index
+match_key: numero_serie
+golden_path: {g.name}
+chunks:
+  - chunk_index: 0
+    label: positive
+  - chunk_index: 1
+    label: negative
+""",
+    )
+    with pytest.raises(ValidationError):
+        load_manifest(path)
+
+
+def test_manifest_match_key_requires_context_when_constructed_directly() -> None:
+    with pytest.raises(ValidationError):
+        from hermes.eval.manifest import EvalManifest
+
+        EvalManifest(
+            fixture_path="x",
+            schema_ref="ref",
+            addressing="chunk_index",
+            match_key="numero_serie",
+            chunks=[ChunkExpectation(chunk_index=0, label=ChunkLabel.POSITIVE)],
+        )
+
+
+def test_infer_golden_base_dir_finds_repo_root(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='t'\n", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    p = sub / "m.manifest.yaml"
+    p.write_text("{}", encoding="utf-8")
+    assert infer_golden_base_dir(p) == tmp_path.resolve()
 
 
 def test_manifest_chunk_golden_path_override(tmp_path: Path) -> None:

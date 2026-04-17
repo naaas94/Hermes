@@ -7,11 +7,25 @@ from hermes.eval.manifest import (
     PageRange,
     load_manifest,
 )
+from hermes.eval.scorer import (
+    ChunkReason,
+    ChunkScore,
+    EvalResult,
+    EvalSummary,
+    FieldDiff,
+    FieldMatch,
+)
 
 __all__ = [
     "ChunkExpectation",
     "ChunkLabel",
+    "ChunkReason",
+    "ChunkScore",
     "EvalManifest",
+    "EvalResult",
+    "EvalSummary",
+    "FieldDiff",
+    "FieldMatch",
     "PageRange",
     "load_manifest",
 ]
