@@ -1,0 +1,12 @@
+{
+  "bench_run_id": "9a7cf0d1-dc5b-4529-aaf1-4918a8a2ba08",
+  "commit": "ab403fd",
+  "timestamp": "2026-04-17T23:12:53Z",
+  "environment": {
+    "os": "Windows",
+    "python": "3.14.2",
+    "machine": "AMD64"
+  },
+  "results": [],
+  "dual_sink_regression": false
+}
