@@ -169,7 +169,9 @@ def test(
     from hermes.db import get_llm_runs_for_job, get_stages_for_job, open_db
     from hermes.extraction.pipeline import run_pipeline
 
-    excel_file = Path("test_excel_stress_synthetic.xlsx")
+    stress_xlsx = Path("test_excel_stress_synthetic.xlsx")
+    legacy_xlsx = Path("test_excel_accuracy_synthetic.xlsx")
+    excel_file = stress_xlsx if stress_xlsx.exists() else legacy_xlsx
     pdf_file = Path("test_pdf_stress_riscbac.pdf")
 
     if not excel_file.exists() or not pdf_file.exists():
