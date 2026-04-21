@@ -209,6 +209,34 @@ chunks:
     assert m.match_key == "numero_serie"
 
 
+def test_manifest_rejects_multi_record_golden_without_match_key(tmp_path: Path) -> None:
+    g = tmp_path / "t.golden.jsonl"
+    g.write_text(
+        json.dumps([{"id": "a", "v": 1}, {"id": "b", "v": 2}]) + "\n[]\n",
+        encoding="utf-8",
+    )
+    path = _write(
+        tmp_path,
+        "f.manifest.yaml",
+        f"""
+fixture_path: x.xlsx
+schema_ref: hermes.schemas.examples.vehicle_fleet:VehicleRecord
+addressing: chunk_index
+golden_path: {g.name}
+chunks:
+  - chunk_index: 0
+    label: positive
+  - chunk_index: 1
+    label: negative
+""",
+    )
+    with pytest.raises(
+        ValidationError,
+        match="match_key is required when a golden provides multiple records",
+    ):
+        load_manifest(path)
+
+
 def test_manifest_rejects_match_key_missing_in_golden_row(tmp_path: Path) -> None:
     g = tmp_path / "t.golden.jsonl"
     g.write_text(json.dumps([{"make": "Ford"}]) + "\n[]\n", encoding="utf-8")

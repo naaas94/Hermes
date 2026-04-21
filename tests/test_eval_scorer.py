@@ -22,6 +22,7 @@ from hermes.eval.scorer import (
     REASON_RECORD_JSON_PARSE_ERROR,
     REASON_SCHEMA_PASS_NO_GOLDEN,
     REASON_SCHEMA_REJECT,
+    _field_diffs_for_records,
     score_fixture,
 )
 
@@ -290,6 +291,23 @@ def _manifest_anchor(**kwargs: object) -> EvalManifest:
     )
 
 
+def test_eval_scorer_warns_index_pairing_without_match_key_multi_record(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manifest = EvalManifest(
+        fixture_path="x.pdf",
+        schema_ref="ref",
+        addressing="chunk_index",
+        chunks=[ChunkExpectation(chunk_index=0, label=ChunkLabel.POSITIVE)],
+    )
+    gold = [{"k": "a", "n": 1}, {"k": "b", "n": 2}]
+    job = [{"chunk_index": 0, "record_json": json.dumps(gold)}]
+    caplog.set_level(logging.WARNING, logger="hermes.eval.scorer")
+    r = score_fixture(manifest, job, {0: gold})
+    assert r.chunks[0].passed is True
+    assert "index-only record pairing for multiset rows" in caplog.text
+
+
 def test_eval_scorer_anchor_mode_reorder_invariant() -> None:
     manifest = _manifest_anchor()
     gold = [
@@ -338,6 +356,16 @@ def test_eval_scorer_anchor_mode_extra_actual_record() -> None:
     assert r.summary.records_extra == 1
     assert r.summary.records_missing == 0
     assert any(d.match == "extra" for d in r.chunks[0].field_diffs)
+
+
+def test_f14_unexpected_field_is_mismatch_not_fieldmatch_extra() -> None:
+    """F-14: key-only surprises use MatchType mismatch; ``extra`` is for orphan records (anchor)."""
+    diffs, _, _, _ = _field_diffs_for_records(
+        [{"a": 1}],
+        [{"a": 1, "unexpected": 2}],
+    )
+    assert any(d.field == "unexpected" and d.match == "mismatch" for d in diffs)
+    assert not any(d.match == "extra" for d in diffs)
 
 
 def test_eval_scorer_anchor_mode_duplicate_anchor_warning(caplog: pytest.LogCaptureFixture) -> None:

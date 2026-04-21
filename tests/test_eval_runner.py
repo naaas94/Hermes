@@ -359,6 +359,9 @@ def test_runner_pipeline_mode_scores(
         project_root=tmp_path,
         results_mode=ResultsMode.PIPELINE,
     )
+    _mock_run.assert_called_once()
+    assert _mock_run.call_args.kwargs.get("force_new_job") is True
+
     assert len(outcomes) == 1
     assert outcomes[0].job_id == "job-a"
     r = outcomes[0].result
