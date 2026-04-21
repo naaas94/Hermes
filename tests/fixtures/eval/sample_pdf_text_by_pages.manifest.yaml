@@ -1,6 +1,7 @@
 fixture_path: tests/fixtures/eval/sample_text.pdf
 schema_ref: hermes.schemas.examples.vehicle_fleet:VehicleRecord
 addressing: page_range
+match_key: numero_serie
 modality: pdf
 notes: >
   Page 1 vehicle slips addressed by page_range [1,1]; golden matches sample_pdf_text chunk 0 baseline.

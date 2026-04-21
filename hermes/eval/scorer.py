@@ -1,4 +1,22 @@
-"""Eval scoring: compare extraction job output to manifest expectations and optional goldens."""
+"""Eval scoring: compare extraction job output to manifest expectations and optional goldens.
+
+**A-03 / F-14 — “extra” fields and product limits**
+
+- **No per-chunk golden (positive chunk):** when neither inline goldens nor ``golden_path``
+  supply rows, a validated non-empty extraction yields ``schema_pass_no_golden`` — there is
+  **no** field-level diff and **no** field accuracy; the harness cannot label model-only keys
+  as hallucinations (see ``score_fixture`` / ``REASON_SCHEMA_PASS_NO_GOLDEN``).
+- **Paired-row field diffs** (``_field_diffs_for_records``): for each aligned pair of golden
+  vs actual dicts we walk the **union** of keys and compare values via ``normalize_value``.
+  Keys present only on the actual side (expected absent / null) are scored with normal
+  ``MatchType`` values such as ``"mismatch"`` — **not** with ``FieldMatch`` ``"extra"``.
+- **``FieldMatch`` ``"extra"``** is reserved for **anchor** mode (``match_key`` set): an
+  **entire actual record** that does not pair to any golden row after anchor matching. It
+  does **not** mean “an extra field inside a matched record.”
+- **Scorer changes** that add explicit hallucination flags, manifest switches, or different
+  semantics need **product approval** and a **new plan version**; do not treat this
+  docstring as a commitment to ship detection features.
+"""
 
 from __future__ import annotations
 
@@ -224,6 +242,16 @@ def _field_diffs_for_records(
 ) -> tuple[list[FieldDiff], int | None, int | None, int | None]:
     """Compare records pairwise (index order) or by anchor when ``match_key`` is set."""
     if not match_key:
+        if len(expected) > 1 or len(actual) > 1:
+            ci = chunk_index if chunk_index is not None else -1
+            logger.warning(
+                (
+                    "index-only record pairing for multiset rows (fixture=%s chunk_index=%s); "
+                    "set match_key on the manifest for anchor pairing, or use single-record goldens"
+                ),
+                fixture_path or "?",
+                ci,
+            )
         diffs: list[FieldDiff] = []
         n = max(len(expected), len(actual))
         for i in range(n):

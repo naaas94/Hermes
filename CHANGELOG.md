@@ -1,6 +1,18 @@
 # Changelog
 
+## 2026-04-20
+
+- **T5 (eval tackle-now, audit remediation):** Reconcile `.dev/EVAL.md` A-04 with landed `tests/test_eval_resume_integration.py` (explicit `run_eval_suite` + `ResultsMode.FROM_JOB`); fix README **How we measure quality** T2 pointer to a markdown link; eval plan advances to **v1.3**. **`test_runner_pipeline_mode_scores`** asserts the pipeline eval path calls `run_pipeline` with **`force_new_job=True`** so the T2 policy assumption stays regression-tested.
+
+- **T2 (eval tackle-now, live-LLM policy):** Document how **non-mocked** eval should interpret **output variance**: pipeline eval uses **`force_new_job=True`** (one full job per manifest) and the harness scores **one trial** with **no** in-repo aggregation layer; **numeric tolerance bands** and **multi-sample** pass/fail rules stay **deferred** pending product choice. **`.dev/EVAL.md`** and README **How we measure quality** link the narrative. **Decision log:** `.dev/decision-logs/eval-tackle-now-T2-live-llm-policy.md`.
+
+- **T3 (eval tackle-now, A-04):** **`tests/test_eval_resume_integration.py`** exercises **`resume_pipeline`** to finish a partial job, then **`run_eval_suite`** with **`ResultsMode.FROM_JOB`** on the same **`job_id`**, with a mocked LLM aligned to committed eval goldens (no new CLI or API).
+
+- **T4 (eval tackle-now, F-14 / A-03):** Document F-14/A-03 eval stance in **`hermes/eval/scorer.py`** and **`.dev/EVAL.md`** (no golden → no field accuracy; **`FieldMatch` `"extra"`** vs key-level mismatch); add **`test_f14_unexpected_field_is_mismatch_not_fieldmatch_extra`**.
+
 ## [schema 2.0] — 2026-04-17
+
+- **T1:** **`load_manifest`** now rejects multiset goldens when **`match_key`** is unset, so file-backed eval fixtures cannot silently use index-only record pairing; **`hermes.eval.scorer`** logs a **warning** if multiset rows are compared without **`match_key`** at runtime (e.g. in-memory **`goldens=`**). **`sample_pdf_text_by_pages.manifest.yaml`** sets **`match_key: numero_serie`** to match its multi-record golden.
 
 - **(eval T10 polish):** Re-export `EvalResult`, `FieldDiff`, `FieldMatch`, `ChunkScore`, `ChunkReason`, and `EvalSummary` from `hermes.eval`; document normalizer ambiguity classes and `field_type_hint` in `hermes/eval/normalize.py`; extend README **How we measure quality** with `field_type_hint` and `match_key` / anchor scoring notes.
 

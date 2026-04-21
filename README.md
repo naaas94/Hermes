@@ -267,6 +267,8 @@ hermes eval --manifest tests/fixtures/eval/sample_excel.manifest.yaml -v
 
 Use `--from-results <job_id>` or `--from-jsonl <path>` to score without re-running extraction. `--output <file.json>` writes machine-readable results; `--update-goldens` refreshes golden files when you intentionally change outputs.
 
+**Non-mocked / live-LLM eval** runs one full pipeline job per manifest (`force_new_job=True`); the repo does not yet aggregate multiple trials or define numeric tolerance bands. For variance, CI vs local stance, and deferred knobs, see the [T2 live-LLM policy decision log](.dev/decision-logs/eval-tackle-now-T2-live-llm-policy.md).
+
 For fields where the lenient normalizer might match too eagerly (bare integers vs percent strings, ambiguous dates, near-zero comparisons), set `field_type_hint` explicitly in the manifest (behavior is defined alongside the normalization helpers in **`hermes.eval`**). When `match_key` is set on a manifest, anchor-mode scoring reports per-record `missing` / `extra` field diffs and populates **`EvalSummary`** fields `records_matched` / `records_extra` / `records_missing`. Callers that branch on coarse chunk `reason` strings should inspect `field_diffs` and those counts for specifics.
 
 **`hermes test`** (above) remains a **stress / integration** path: large synthetic Excel + multi-page PDF through the real pipeline with telemetry. It complements eval; it does not replace golden regression.

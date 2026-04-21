@@ -120,6 +120,37 @@ class EvalManifest(BaseModel):
             raise ValueError(err)
         return self
 
+    @model_validator(mode="after")
+    def multi_record_goldens_require_match_key(self, info: ValidationInfo) -> EvalManifest:
+        """Reject manifests where multiset goldens would fall back to index-only pairing."""
+        if self.match_key:
+            return self
+        ctx = info.context
+        if not isinstance(ctx, dict):
+            return self
+        base = ctx.get("golden_base_dir")
+        if base is None:
+            return self
+        base_dir = Path(base)
+        for exp in self.chunks:
+            recs, err = resolve_golden_records(self, exp, None, base_dir)
+            if err is not None:
+                continue
+            if not recs:
+                continue
+            if len(recs) > 1:
+                addr = (
+                    f"chunk_index={exp.chunk_index}"
+                    if exp.chunk_index is not None
+                    else f"page_range={exp.page_range.start}-{exp.page_range.end}"
+                )
+                msg = (
+                    "match_key is required when a golden provides multiple records "
+                    f"({addr}); index-only pairing is not allowed for multiset goldens"
+                )
+                raise ValueError(msg)
+        return self
+
 
 def load_golden_line(path: Path, line_index: int) -> tuple[list[dict[str, Any]], str | None]:
     if not path.is_file():
