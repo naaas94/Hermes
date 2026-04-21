@@ -230,7 +230,10 @@ chunks:
     label: negative
 """,
     )
-    with pytest.raises(ValidationError, match="match_key is required when a golden provides multiple records"):
+    with pytest.raises(
+        ValidationError,
+        match="match_key is required when a golden provides multiple records",
+    ):
         load_manifest(path)
 
 

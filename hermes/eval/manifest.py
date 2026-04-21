@@ -139,11 +139,12 @@ class EvalManifest(BaseModel):
             if not recs:
                 continue
             if len(recs) > 1:
-                addr = (
-                    f"chunk_index={exp.chunk_index}"
-                    if exp.chunk_index is not None
-                    else f"page_range={exp.page_range.start}-{exp.page_range.end}"
-                )
+                if exp.chunk_index is not None:
+                    addr = f"chunk_index={exp.chunk_index}"
+                else:
+                    pr = exp.page_range
+                    assert pr is not None  # ChunkExpectation.exactly_one_address
+                    addr = f"page_range={pr.start}-{pr.end}"
                 msg = (
                     "match_key is required when a golden provides multiple records "
                     f"({addr}); index-only pairing is not allowed for multiset goldens"
